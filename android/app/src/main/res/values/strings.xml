@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Hyperion Grabber</string>
+
+    <string name="setting_host">Host</string>
+    <string name="setting_port">Protocol</string>
+    <string name="setting_fps">FPS</string>
+    <string name="setting_resolution">Resolution</string>
+    <string name="setting_schedule">Schedule</string>
+
+    <string name="status_idle">Idle</string>
+    <string name="status_checking">Checking…</string>
+    <string name="status_connected">Connected</string>
+    <string name="status_running">Running</string>
+    <string name="status_error">Unreachable</string>
+
+    <string name="conn_checking">Checking…</string>
+    <string name="conn_connected">%1$d LEDs detected · resolution set to %2$d×%3$d</string>
+    <string name="conn_failed">Unreachable: %1$s</string>
+
+    <string name="btn_start">Start</string>
+    <string name="btn_stop">Stop</string>
+    <string name="btn_test_leds">Test LEDs</string>
+
+    <string name="edit_confirm">Confirm</string>
+    <string name="edit_cancel">Cancel</string>
+
+    <string name="schedule_off">Off</string>
+    <string name="schedule_fixed">%1$d:00 – %2$d:00</string>
+    <string name="schedule_sunset">Sunset – %1$d:00</string>
+
+    <string name="schedule_mode_off">Off</string>
+    <string name="schedule_mode_fixed">Fixed Time</string>
+    <string name="schedule_mode_sunset">Sunset (auto)</string>
+
+    <string name="schedule_start_label">Start hour (0–23)</string>
+    <string name="schedule_end_label">End hour (0–23)</string>
+</resources>

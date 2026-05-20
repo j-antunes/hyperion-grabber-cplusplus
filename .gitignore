@@ -1,0 +1,26 @@
+# ── C++ build output ──────────────────────────────────────────────────────────
+build/
+build-tests/
+*.o
+*.a
+*.so
+
+# ── Android build output ──────────────────────────────────────────────────────
+android/.gradle/
+android/app/build/
+android/app/.cxx/
+android/local.properties
+
+# ── Generated flatbuffers headers ─────────────────────────────────────────────
+# Kept in the repo so Android cross-compile works without a prior native build.
+# core/include/generated/
+
+# ── IDE / OS ──────────────────────────────────────────────────────────────────
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
+
+# ── Misc ──────────────────────────────────────────────────────────────────────
+*.log
+__pycache__/

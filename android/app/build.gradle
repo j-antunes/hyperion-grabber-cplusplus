@@ -1,0 +1,58 @@
+plugins {
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.android)
+}
+
+android {
+    namespace         = "com.hyperion.grabber"
+    compileSdk        = 35
+    buildToolsVersion = "35.0.0"
+
+    defaultConfig {
+        applicationId   = "com.hyperion.grabber"
+        minSdk          = 26
+        targetSdk       = 35
+        versionCode     = 1
+        versionName     = "1.0"
+        ndkVersion      = "27.0.12077973"
+
+        externalNativeBuild {
+            cmake {
+                // Pass -DANDROID=1 so CMakeLists.txt selects the JNI target
+                arguments "-DANDROID=1"
+                cppFlags  "-std=c++17"
+                abiFilters "arm64-v8a", "armeabi-v7a", "x86_64", "x86"
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path    "../CMakeLists.txt"
+            version "3.22.1"
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
+    }
+    kotlinOptions {
+        jvmTarget = "1.8"
+    }
+}
+
+dependencies {
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.appcompat)
+    implementation(libs.androidx.lifecycle.viewmodel)
+    implementation(libs.androidx.lifecycle.livedata)
+    implementation(libs.androidx.fragment.ktx)
+    testImplementation(libs.junit)
+}

@@ -1,0 +1,164 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg_dark"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:padding="48dp"
+        android:focusable="false">
+
+        <!-- Left column: settings -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:layout_marginEnd="48dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/app_name"
+                android:textSize="32sp"
+                android:textColor="@color/text_primary"
+                android:textStyle="bold"
+                android:layout_marginBottom="32dp" />
+
+            <!-- Settings card -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/bg_card"
+                android:padding="8dp">
+
+                <include layout="@layout/row_setting" android:id="@+id/rowHost" />
+                <View android:layout_width="match_parent" android:layout_height="1dp"
+                    android:background="@color/divider" android:layout_marginHorizontal="16dp"/>
+                <include layout="@layout/row_setting" android:id="@+id/rowPort" />
+                <View android:layout_width="match_parent" android:layout_height="1dp"
+                    android:background="@color/divider" android:layout_marginHorizontal="16dp"/>
+                <include layout="@layout/row_setting" android:id="@+id/rowFps" />
+                <View android:layout_width="match_parent" android:layout_height="1dp"
+                    android:background="@color/divider" android:layout_marginHorizontal="16dp"/>
+                <include layout="@layout/row_setting" android:id="@+id/rowResolution" />
+                <View android:layout_width="match_parent" android:layout_height="1dp"
+                    android:background="@color/divider" android:layout_marginHorizontal="16dp"/>
+                <include layout="@layout/row_setting" android:id="@+id/rowSchedule" />
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+        <!-- Right column: status + controls -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:layout_marginTop="76dp">
+
+            <!-- Connection status card -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/bg_card"
+                android:padding="24dp"
+                android:layout_marginBottom="24dp">
+
+                <!-- Status row: dot + label -->
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginBottom="8dp">
+
+                    <View
+                        android:id="@+id/statusDot"
+                        android:layout_width="16dp"
+                        android:layout_height="16dp"
+                        android:background="@drawable/bg_status_dot"
+                        android:layout_marginEnd="12dp" />
+
+                    <TextView
+                        android:id="@+id/statusText"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textSize="20sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/text_primary"
+                        android:text="@string/status_idle" />
+
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/connectionInfo"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textSize="15sp"
+                    android:textColor="@color/text_secondary"
+                    android:text="" />
+
+            </LinearLayout>
+
+            <!-- Control buttons -->
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginBottom="12dp">
+
+                <Button
+                    android:id="@+id/btnStart"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/btn_start"
+                    android:focusable="true"
+                    android:nextFocusRight="@id/btnStop"
+                    android:nextFocusDown="@id/btnTestLeds"
+                    style="@style/TvButton" />
+
+                <Button
+                    android:id="@+id/btnStop"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/btn_stop"
+                    android:focusable="true"
+                    android:layout_marginStart="16dp"
+                    android:nextFocusLeft="@id/btnStart"
+                    android:nextFocusRight="@id/btnTestLeds"
+                    android:nextFocusDown="@id/btnTestLeds"
+                    style="@style/TvButton" />
+
+                <Button
+                    android:id="@+id/btnTestLeds"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/btn_test_leds"
+                    android:focusable="true"
+                    android:layout_marginStart="16dp"
+                    android:nextFocusLeft="@id/btnStop"
+                    style="@style/TvButton" />
+
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/testLedResult"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textSize="14sp"
+                android:textColor="@color/text_secondary"
+                android:text="" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+</ScrollView>

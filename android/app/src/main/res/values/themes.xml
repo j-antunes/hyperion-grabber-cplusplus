@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="AppTheme" parent="Theme.AppCompat.NoActionBar">
+        <item name="colorPrimary">@color/btn_primary</item>
+        <item name="android:windowBackground">@color/bg_dark</item>
+    </style>
+
+    <style name="TvButton" parent="Widget.AppCompat.Button">
+        <item name="android:background">@drawable/bg_button_selector</item>
+        <item name="android:textColor">@color/btn_text</item>
+        <item name="android:textSize">16sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:focusable">true</item>
+        <item name="android:paddingHorizontal">24dp</item>
+        <item name="android:paddingVertical">12dp</item>
+    </style>
+</resources>

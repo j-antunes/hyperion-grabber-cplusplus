@@ -1,0 +1,42 @@
+// Hyperion.ng flatbuffers schema — matches hyperion-project/hyperion.ng 2.x
+// Source: https://github.com/hyperion-project/hyperion.ng/tree/master/libsrc/flatbufserver/schema
+//
+// Generate C++ bindings:
+//   flatc --cpp -o core/include/generated/ flatbuffers/hyperion.fbs
+
+namespace hyperionnet;
+
+table Register {
+  origin:string (required);
+  priority:int;
+}
+
+table Image {
+  data:[ubyte] (required);
+  width:int;
+  height:int;
+  duration:int = -1;   // -1 = indefinite
+}
+
+table Color {
+  data:int;            // packed 0x00RRGGBB
+  duration:int = -1;
+}
+
+table Clear {
+  priority:int;
+}
+
+union Command { Register, Image, Color, Clear }
+
+table Request {
+  command:Command (required);
+}
+
+table Reply {
+  error:string;
+  registered:int = -1;
+  video:bool;
+}
+
+root_type Request;

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bg_dark">#FF121212</color>
+    <color name="bg_card">#FF1E1E1E</color>
+    <color name="bg_row_focused">#FF2D2D2D</color>
+    <color name="divider">#FF2A2A2A</color>
+
+    <color name="text_primary">#FFFFFFFF</color>
+    <color name="text_secondary">#FFB0B0B0</color>
+    <color name="text_accent">#FF7EC8E3</color>
+
+    <color name="status_idle">#FF808080</color>
+    <color name="status_running">#FF4CAF50</color>
+    <color name="status_error">#FFF44336</color>
+
+    <color name="btn_primary">#FF7EC8E3</color>
+    <color name="btn_primary_focused">#FF4FAFD0</color>
+    <color name="btn_text">#FF000000</color>
+</resources>
