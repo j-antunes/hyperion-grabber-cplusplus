@@ -24,7 +24,7 @@ class GrabberViewModel(app: Application) : AndroidViewModel(app) {
 
     private val prefs = app.getSharedPreferences("grabber_prefs", Context.MODE_PRIVATE)
 
-    val host         = MutableLiveData(prefs.getString("host", "192.168.14.253")!!)
+    val host         = MutableLiveData(prefs.getString("host", "")!!)
     val port         = MutableLiveData(prefs.getInt("port", 19400))
     val fps          = MutableLiveData(prefs.getInt("fps", 25))
     val targetWidth  = MutableLiveData(prefs.getInt("targetWidth", 64))

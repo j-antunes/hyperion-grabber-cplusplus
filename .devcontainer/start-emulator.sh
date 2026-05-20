@@ -1,8 +1,8 @@
 #!/bin/bash
 # Runs every time the devcontainer starts.
-# Launches Xvfb + the Android TV emulator, then tries to connect to the Bravia TV.
+# Launches Xvfb + the Android TV emulator, then optionally connects to a physical TV.
 
-HYPERION_TV_HOST="192.168.14.92"
+HYPERION_TV_HOST="${HYPERION_TV_HOST:-}"
 HYPERION_TV_PORT="5555"
 EMULATOR_DISPLAY=":99"
 EMULATOR_LOG="/tmp/emulator.log"
@@ -34,19 +34,27 @@ else
         -accel auto \
         > "$EMULATOR_LOG" 2>&1 &
     echo "[Emulator] PID $! — logs at $EMULATOR_LOG"
-    echo "[Emulator] Waiting for boot..."
-    adb wait-for-device shell \
-        "while [ \"\$(getprop sys.boot_completed)\" != \"1\" ]; do sleep 1; done"
-    echo "[Emulator] Booted — emulator-5554 ready"
+    echo "[Emulator] Waiting for boot (up to 3 min)..."
+    BOOT_TIMEOUT=180
+    ELAPSED=0
+    until adb shell getprop sys.boot_completed 2>/dev/null | grep -q "^1$"; do
+        if [ "$ELAPSED" -ge "$BOOT_TIMEOUT" ]; then
+            echo "[Emulator] Boot timeout — still starting in background, check 'adb devices'"
+            break
+        fi
+        sleep 3
+        ELAPSED=$((ELAPSED + 3))
+    done
+    adb shell getprop sys.boot_completed 2>/dev/null | grep -q "^1$" && echo "[Emulator] Booted — emulator-5554 ready"
 fi
 
-# ── Physical Bravia TV (optional, only if on same network) ───────────────────
+# ── Physical TV (optional, set HYPERION_TV_HOST env var to connect) ──────────
 adb start-server > /dev/null 2>&1
-if nc -z -w 2 "$HYPERION_TV_HOST" "$HYPERION_TV_PORT" 2>/dev/null; then
-    echo "[ADB] Bravia TV reachable — connecting..."
+if [ -n "$HYPERION_TV_HOST" ] && nc -z -w 2 "$HYPERION_TV_HOST" "$HYPERION_TV_PORT" 2>/dev/null; then
+    echo "[ADB] TV reachable — connecting..."
     adb connect "$HYPERION_TV_HOST:$HYPERION_TV_PORT"
-else
-    echo "[ADB] Bravia TV not reachable (not on home network — skipping)"
+elif [ -n "$HYPERION_TV_HOST" ]; then
+    echo "[ADB] TV not reachable (skipping)"
 fi
 
 echo ""

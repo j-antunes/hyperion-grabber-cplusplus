@@ -19,14 +19,16 @@ else
 fi
 
 # ── C++ host build (generates flatbuffers headers, builds test binary) ───────
+WORKSPACE_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 echo "[CMake] Configuring..."
-cmake -B build -DCMAKE_BUILD_TYPE=Debug -S /workspace
+rm -rf "$WORKSPACE_ROOT/build"
+cmake -B "$WORKSPACE_ROOT/build" -DCMAKE_BUILD_TYPE=Debug -S "$WORKSPACE_ROOT"
 echo "[CMake] Building..."
-cmake --build build -j"$(nproc)"
+cmake --build "$WORKSPACE_ROOT/build" -j"$(nproc)"
 
 # ── Android debug APK ─────────────────────────────────────────────────────────
 echo "[Gradle] Building debug APK..."
-cd /workspace/android && ./gradlew assembleDebug --no-daemon
+cd "$WORKSPACE_ROOT/android" && ./gradlew assembleDebug --no-daemon
 echo "[Gradle] Done"
 
 echo "=== Setup complete ==="

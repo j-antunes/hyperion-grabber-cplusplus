@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # X11 / OpenGL (Linux grabber + emulator software rendering)
     libx11-dev \
     libx11-6 \
-    libgl1-mesa-glx \
+    libgl1 \
     libglu1-mesa \
     # Emulator: virtual display (headless, cross-platform)
     xvfb \
@@ -68,6 +68,15 @@ ENV ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973
 
 # Give ubuntu user full SDK write access (Gradle manages SDK components at build time)
 RUN chown -R ubuntu:ubuntu $ANDROID_HOME
+
+# Pre-create the X11 socket dir so Xvfb works as a non-root user
+RUN mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix
+
+# ── Node.js 22 LTS + Claude Code CLI ─────────────────────────────────────────
+RUN wget -qO- https://deb.nodesource.com/setup_22.x | bash - && \
+    apt-get install -y --no-install-recommends nodejs && \
+    npm install -g @anthropic-ai/claude-code && \
+    rm -rf /var/lib/apt/lists/*
 
 USER ubuntu
 WORKDIR /workspace

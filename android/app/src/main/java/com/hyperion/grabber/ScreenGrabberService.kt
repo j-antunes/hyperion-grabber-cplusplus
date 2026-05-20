@@ -30,7 +30,7 @@ class ScreenGrabberService : Service() {
     private var frameCountStart = 0L
 
     // Persisted so RESUME can restart capture with the same config
-    private var captureHost = "192.168.14.253"
+    private var captureHost = ""
     private var capturePort = 19400
     private var captureDstW = 64
     private var captureDstH = 36
