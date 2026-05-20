@@ -47,7 +47,17 @@ class MainFragment : Fragment() {
         val btnTestLeds    = view.findViewById<Button>(R.id.btnTestLeds)
         val testLedResult  = view.findViewById<TextView>(R.id.testLedResult)
 
-        vm.host.observe(viewLifecycleOwner)         { updateRow(view.findViewById(R.id.rowHost), it) }
+        fun refreshStartButton() {
+            val notRunning = vm.grabberStatus.value != GrabberViewModel.GrabberStatus.RUNNING
+            val connected  = vm.connectionState.value is ConnectionState.Connected
+            val hostOk     = !vm.host.value.isNullOrBlank()
+            btnStart.isEnabled = notRunning && connected && hostOk
+        }
+
+        vm.host.observe(viewLifecycleOwner) {
+            updateRow(view.findViewById(R.id.rowHost), it)
+            refreshStartButton()
+        }
         vm.port.observe(viewLifecycleOwner)         { updateRow(view.findViewById(R.id.rowPort), protocolLabel(it)) }
         vm.fps.observe(viewLifecycleOwner)          { updateRow(view.findViewById(R.id.rowFps), "$it fps") }
         vm.targetWidth.observe(viewLifecycleOwner)  {
@@ -74,8 +84,8 @@ class MainFragment : Fragment() {
         vm.scheduleEndHour.observe(viewLifecycleOwner)   { refreshScheduleRow() }
 
         vm.grabberStatus.observe(viewLifecycleOwner) { status ->
-            btnStart.isEnabled = status != GrabberViewModel.GrabberStatus.RUNNING
-            btnStop.isEnabled  = status == GrabberViewModel.GrabberStatus.RUNNING
+            btnStop.isEnabled = status == GrabberViewModel.GrabberStatus.RUNNING
+            refreshStartButton()
         }
 
         vm.connectionState.observe(viewLifecycleOwner) { connState ->
@@ -93,6 +103,7 @@ class MainFragment : Fragment() {
             statusDot.backgroundTintList = ContextCompat.getColorStateList(requireContext(), dotColor)
             statusText.setText(statusLabel)
             connectionInfo.text = infoText
+            refreshStartButton()
         }
 
         vm.testLedState.observe(viewLifecycleOwner) { msg ->

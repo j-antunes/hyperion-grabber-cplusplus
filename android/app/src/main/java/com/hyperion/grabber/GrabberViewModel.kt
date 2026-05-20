@@ -81,9 +81,13 @@ class GrabberViewModel(app: Application) : AndroidViewModel(app) {
 
     fun checkConnection() {
         checkJob?.cancel()
+        if (host.value.isNullOrBlank()) {
+            connectionState.value = ConnectionState.Idle
+            return
+        }
         checkJob = viewModelScope.launch {
             connectionState.value = ConnectionState.Checking
-            val result = HyperionJsonClient.queryServerInfo(host.value ?: return@launch)
+            val result = HyperionJsonClient.queryServerInfo(host.value!!)
             connectionState.value = result.fold(
                 onSuccess = { info ->
                     saveResolution(info.recommendedWidth, info.recommendedHeight)
