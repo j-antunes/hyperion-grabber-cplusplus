@@ -81,6 +81,25 @@ object HyperionJsonClient {
             }
         }
 
+    suspend fun setBrightness(host: String, brightness: Int) =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val body = """{"command":"adjustment","adjustment":{"brightness":$brightness,"id":"default"}}"""
+                val url = java.net.URL("http://$host:8090/json-rpc")
+                val conn = url.openConnection() as java.net.HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.doOutput = true
+                conn.connectTimeout = TIMEOUT_MS
+                conn.readTimeout = TIMEOUT_MS
+                conn.outputStream.bufferedWriter().use { it.write(body) }
+                val response = conn.inputStream.bufferedReader().readText()
+                val json = JSONObject(response)
+                check(json.optBoolean("success", false)) { "Hyperion rejected brightness change" }
+                Log.d(TAG, "Brightness set to $brightness")
+            }
+        }
+
     private fun recommendedResolution(leds: JSONArray): Pair<Int, Int> {
         val zones = (0 until leds.length()).map {
             val led = leds.getJSONObject(it)

@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+<ScrollView
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/bg_dark"
@@ -50,6 +54,9 @@
                 <View android:layout_width="match_parent" android:layout_height="1dp"
                     android:background="@color/divider" android:layout_marginHorizontal="16dp"/>
                 <include layout="@layout/row_setting" android:id="@+id/rowSchedule" />
+                <View android:layout_width="match_parent" android:layout_height="1dp"
+                    android:background="@color/divider" android:layout_marginHorizontal="16dp"/>
+                <include layout="@layout/row_setting" android:id="@+id/rowBrightness" />
 
             </LinearLayout>
 
@@ -106,6 +113,18 @@
                     android:textColor="@color/text_secondary"
                     android:text="" />
 
+                <!-- Live stats: fps + uptime, visible when running -->
+                <TextView
+                    android:id="@+id/liveStats"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textSize="13sp"
+                    android:textColor="@color/text_accent"
+                    android:layout_marginTop="8dp"
+                    android:visibility="gone"
+                    android:text="" />
+
+
             </LinearLayout>
 
             <!-- Control buttons -->
@@ -116,23 +135,11 @@
                 android:layout_marginBottom="12dp">
 
                 <Button
-                    android:id="@+id/btnStart"
+                    android:id="@+id/btnStartStop"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="@string/btn_start"
                     android:focusable="true"
-                    android:nextFocusRight="@id/btnStop"
-                    android:nextFocusDown="@id/btnTestLeds"
-                    style="@style/TvButton" />
-
-                <Button
-                    android:id="@+id/btnStop"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="@string/btn_stop"
-                    android:focusable="true"
-                    android:layout_marginStart="16dp"
-                    android:nextFocusLeft="@id/btnStart"
                     android:nextFocusRight="@id/btnTestLeds"
                     android:nextFocusDown="@id/btnTestLeds"
                     style="@style/TvButton" />
@@ -144,7 +151,7 @@
                     android:text="@string/btn_test_leds"
                     android:focusable="true"
                     android:layout_marginStart="16dp"
-                    android:nextFocusLeft="@id/btnStop"
+                    android:nextFocusLeft="@id/btnStartStop"
                     style="@style/TvButton" />
 
             </LinearLayout>
@@ -162,3 +169,38 @@
     </LinearLayout>
 
 </ScrollView>
+
+    <!-- Gradient border — visible when grabber is running -->
+    <View
+        android:id="@+id/borderTop"
+        android:layout_width="match_parent"
+        android:layout_height="20dp"
+        android:layout_gravity="top"
+        android:background="@drawable/gradient_border_top"
+        android:visibility="gone" />
+
+    <View
+        android:id="@+id/borderBottom"
+        android:layout_width="match_parent"
+        android:layout_height="20dp"
+        android:layout_gravity="bottom"
+        android:background="@drawable/gradient_border_bottom"
+        android:visibility="gone" />
+
+    <View
+        android:id="@+id/borderLeft"
+        android:layout_width="20dp"
+        android:layout_height="match_parent"
+        android:layout_gravity="start"
+        android:background="@drawable/gradient_border_left"
+        android:visibility="gone" />
+
+    <View
+        android:id="@+id/borderRight"
+        android:layout_width="20dp"
+        android:layout_height="match_parent"
+        android:layout_gravity="end"
+        android:background="@drawable/gradient_border_right"
+        android:visibility="gone" />
+
+</FrameLayout>

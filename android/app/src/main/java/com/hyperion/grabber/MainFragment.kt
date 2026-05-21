@@ -2,6 +2,8 @@ package com.hyperion.grabber
 
 import android.app.AlertDialog
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.text.Editable
 import android.text.InputType
 import android.text.TextWatcher
@@ -14,6 +16,7 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.RadioButton
 import android.widget.RadioGroup
+import android.widget.SeekBar
 import android.widget.TextView
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
@@ -22,6 +25,14 @@ import androidx.fragment.app.activityViewModels
 class MainFragment : Fragment() {
 
     private val vm: GrabberViewModel by activityViewModels()
+    private val uiHandler = Handler(Looper.getMainLooper())
+    private var lastFrameCount = 0L
+    private val statsRunnable = object : Runnable {
+        override fun run() {
+            updateLiveStats()
+            uiHandler.postDelayed(this, 1000L)
+        }
+    }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, state: Bundle?): View =
         inflater.inflate(R.layout.fragment_main, container, false)
@@ -33,6 +44,7 @@ class MainFragment : Fragment() {
         bindSettingRow(view.findViewById(R.id.rowPort),       R.string.setting_port,       SettingKey.PORT)
         bindSettingRow(view.findViewById(R.id.rowFps),        R.string.setting_fps,        SettingKey.FPS)
         bindSettingRow(view.findViewById(R.id.rowResolution), R.string.setting_resolution, SettingKey.RESOLUTION)
+        bindSettingRow(view.findViewById(R.id.rowBrightness), R.string.setting_brightness, SettingKey.BRIGHTNESS)
 
         val rowSchedule    = view.findViewById<View>(R.id.rowSchedule)
         rowSchedule.findViewById<TextView>(R.id.settingLabel).setText(R.string.setting_schedule)
@@ -42,21 +54,26 @@ class MainFragment : Fragment() {
         val statusDot      = view.findViewById<View>(R.id.statusDot)
         val statusText     = view.findViewById<TextView>(R.id.statusText)
         val connectionInfo = view.findViewById<TextView>(R.id.connectionInfo)
-        val btnStart       = view.findViewById<Button>(R.id.btnStart)
-        val btnStop        = view.findViewById<Button>(R.id.btnStop)
+        val btnStartStop   = view.findViewById<Button>(R.id.btnStartStop)
         val btnTestLeds    = view.findViewById<Button>(R.id.btnTestLeds)
         val testLedResult  = view.findViewById<TextView>(R.id.testLedResult)
+        val borderTop   = view.findViewById<View>(R.id.borderTop)
+        val borderBottom= view.findViewById<View>(R.id.borderBottom)
+        val borderLeft  = view.findViewById<View>(R.id.borderLeft)
+        val borderRight = view.findViewById<View>(R.id.borderRight)
+        val liveStats   = view.findViewById<TextView>(R.id.liveStats)
 
-        fun refreshStartButton() {
-            val notRunning = vm.grabberStatus.value != GrabberViewModel.GrabberStatus.RUNNING
-            val connected  = vm.connectionState.value is ConnectionState.Connected
-            val hostOk     = !vm.host.value.isNullOrBlank()
-            btnStart.isEnabled = notRunning && connected && hostOk
+        fun refreshToggleButton() {
+            val running   = vm.grabberStatus.value == GrabberViewModel.GrabberStatus.RUNNING
+            val connected = vm.connectionState.value is ConnectionState.Connected
+            val hostOk    = !vm.host.value.isNullOrBlank()
+            btnStartStop.text      = getString(if (running) R.string.btn_stop else R.string.btn_start)
+            btnStartStop.isEnabled = running || (connected && hostOk)
         }
 
         vm.host.observe(viewLifecycleOwner) {
             updateRow(view.findViewById(R.id.rowHost), it)
-            refreshStartButton()
+            refreshToggleButton()
         }
         vm.port.observe(viewLifecycleOwner)         { updateRow(view.findViewById(R.id.rowPort), protocolLabel(it)) }
         vm.fps.observe(viewLifecycleOwner)          { updateRow(view.findViewById(R.id.rowFps), "$it fps") }
@@ -65,6 +82,9 @@ class MainFragment : Fragment() {
         }
         vm.targetHeight.observe(viewLifecycleOwner) {
             updateRow(view.findViewById(R.id.rowResolution), "${vm.targetWidth.value}×$it")
+        }
+        vm.brightness.observe(viewLifecycleOwner) {
+            updateRow(view.findViewById(R.id.rowBrightness), "$it%")
         }
 
         fun refreshScheduleRow() {
@@ -84,8 +104,21 @@ class MainFragment : Fragment() {
         vm.scheduleEndHour.observe(viewLifecycleOwner)   { refreshScheduleRow() }
 
         vm.grabberStatus.observe(viewLifecycleOwner) { status ->
-            btnStop.isEnabled = status == GrabberViewModel.GrabberStatus.RUNNING
-            refreshStartButton()
+            val running = status == GrabberViewModel.GrabberStatus.RUNNING
+            refreshToggleButton()
+            val borderVisible = if (running) View.VISIBLE else View.GONE
+            borderTop.visibility    = borderVisible
+            borderBottom.visibility = borderVisible
+            borderLeft.visibility   = borderVisible
+            borderRight.visibility  = borderVisible
+            liveStats.visibility = borderVisible
+            if (running) {
+                lastFrameCount = 0L
+                uiHandler.post(statsRunnable)
+            } else {
+                uiHandler.removeCallbacks(statsRunnable)
+                liveStats.text = ""
+            }
         }
 
         vm.connectionState.observe(viewLifecycleOwner) { connState ->
@@ -103,7 +136,7 @@ class MainFragment : Fragment() {
             statusDot.backgroundTintList = ContextCompat.getColorStateList(requireContext(), dotColor)
             statusText.setText(statusLabel)
             connectionInfo.text = infoText
-            refreshStartButton()
+            refreshToggleButton()
         }
 
         vm.testLedState.observe(viewLifecycleOwner) { msg ->
@@ -111,9 +144,28 @@ class MainFragment : Fragment() {
             btnTestLeds.isEnabled = msg == null || !msg.startsWith("Sending")
         }
 
-        btnStart.setOnClickListener { (activity as? MainActivity)?.requestProjection() }
-        btnStop.setOnClickListener  { vm.stopGrabber(requireContext()) }
+        btnStartStop.setOnClickListener {
+            if (vm.grabberStatus.value == GrabberViewModel.GrabberStatus.RUNNING)
+                vm.stopGrabber(requireContext())
+            else
+                (activity as? MainActivity)?.requestProjection()
+        }
         btnTestLeds.setOnClickListener { vm.testLeds() }
+    }
+
+    override fun onDestroyView() {
+        super.onDestroyView()
+        uiHandler.removeCallbacks(statsRunnable)
+    }
+
+    private fun updateLiveStats() {
+        val rootView = view ?: return
+        val liveStats = rootView.findViewById<TextView>(R.id.liveStats) ?: return
+
+        val current = ScreenGrabberService.frameCount
+        val fps = (current - lastFrameCount).toInt()
+        lastFrameCount = current
+        liveStats.text = "↑ ${fps} fps"
     }
 
     private fun bindSettingRow(row: View, labelRes: Int, key: SettingKey) {
@@ -127,7 +179,8 @@ class MainFragment : Fragment() {
     }
 
     private fun showEditDialog(key: SettingKey) {
-        if (key == SettingKey.PORT) { showProtocolPicker(); return }
+        if (key == SettingKey.PORT)        { showProtocolPicker();   return }
+        if (key == SettingKey.BRIGHTNESS)  { showBrightnessSlider(); return }
 
         val (title, hint, inputType, current) = when (key) {
             SettingKey.HOST -> EditMeta(
@@ -146,6 +199,7 @@ class MainFragment : Fragment() {
                 InputType.TYPE_CLASS_NUMBER,
                 vm.targetWidth.value?.toString() ?: "64"
             )
+            SettingKey.BRIGHTNESS -> EditMeta("", "", 0, "") // unreachable — handled above
         }
 
         val editText = EditText(requireContext()).apply {
@@ -187,6 +241,55 @@ class MainFragment : Fragment() {
     private fun protocolLabel(port: Int): String {
         val name = protocols.firstOrNull { it.second == port }?.first
         return if (name != null) "$name · $port" else "Custom · $port"
+    }
+
+    private fun showBrightnessSlider() {
+        val ctx = requireContext()
+        val dp  = ctx.resources.displayMetrics.density
+
+        val valueLabel = TextView(ctx).apply {
+            textSize  = 32f
+            textAlignment = View.TEXT_ALIGNMENT_CENTER
+            setTextColor(ContextCompat.getColor(ctx, R.color.text_primary))
+        }
+
+        val seekBar = SeekBar(ctx).apply {
+            max      = 100
+            progress = vm.brightness.value ?: 100
+            setPadding((16 * dp).toInt(), (16 * dp).toInt(), (16 * dp).toInt(), 0)
+        }
+
+        valueLabel.text = "${seekBar.progress}%"
+
+        seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar, progress: Int, fromUser: Boolean) {
+                valueLabel.text = "$progress%"
+            }
+            override fun onStartTrackingTouch(sb: SeekBar) = Unit
+            override fun onStopTrackingTouch(sb: SeekBar)  = Unit
+        })
+
+        val layout = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding((24 * dp).toInt(), (24 * dp).toInt(), (24 * dp).toInt(), (8 * dp).toInt())
+            addView(valueLabel, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ))
+            addView(seekBar, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).also { it.topMargin = (8 * dp).toInt() })
+        }
+
+        AlertDialog.Builder(ctx)
+            .setTitle(R.string.setting_brightness)
+            .setView(layout)
+            .setPositiveButton(R.string.edit_confirm) { _, _ ->
+                vm.saveBrightness(seekBar.progress)
+            }
+            .setNegativeButton(R.string.edit_cancel, null)
+            .show()
     }
 
     private fun showProtocolPicker() {
@@ -286,6 +389,7 @@ class MainFragment : Fragment() {
             SettingKey.RESOLUTION -> raw.toIntOrNull()?.coerceIn(8, 256)?.let { w ->
                 vm.saveResolution(w, (w * 9 / 16).coerceAtLeast(8))
             }
+            SettingKey.BRIGHTNESS -> raw.toIntOrNull()?.let { vm.saveBrightness(it) }
         }
     }
 

@@ -18,6 +18,8 @@ object HyperionNative {
 
     external fun destroy(handle: Long)
 
+    external fun sendKeepalive(handle: Long): Boolean
+
     // Sends solid red/green/blue test frames without MediaProjection.
     // Returns null on success, error string on failure.
     external fun testConnection(host: String, port: Int): String?

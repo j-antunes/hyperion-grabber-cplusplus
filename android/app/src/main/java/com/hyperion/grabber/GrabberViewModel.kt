@@ -37,6 +37,8 @@ class GrabberViewModel(app: Application) : AndroidViewModel(app) {
     val scheduleStartHour = MutableLiveData(prefs.getInt("scheduleStartHour", 19))
     val scheduleEndHour   = MutableLiveData(prefs.getInt("scheduleEndHour", 22))
 
+    val brightness      = MutableLiveData(prefs.getInt("brightness", 100))
+
     val grabberStatus   = MutableLiveData(GrabberStatus.IDLE)
     val connectionState = MutableLiveData<ConnectionState>(ConnectionState.Idle)
     val testLedState    = MutableLiveData<String?>(null)  // null=idle, "..."=message
@@ -77,6 +79,15 @@ class GrabberViewModel(app: Application) : AndroidViewModel(app) {
             .putInt("scheduleEndHour", endHour)
             .apply()
         ScheduleManager.apply(context, mode, startHour, endHour)
+    }
+
+    fun saveBrightness(v: Int) {
+        val clamped = v.coerceIn(0, 100)
+        brightness.value = clamped
+        prefs.edit().putInt("brightness", clamped).apply()
+        viewModelScope.launch {
+            HyperionJsonClient.setBrightness(host.value ?: return@launch, clamped)
+        }
     }
 
     fun checkConnection() {

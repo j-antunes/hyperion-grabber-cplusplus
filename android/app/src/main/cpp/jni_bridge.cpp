@@ -12,6 +12,7 @@
 struct NativeContext {
     std::unique_ptr<hyperion::HyperionClient>  client;
     std::unique_ptr<hyperion::FrameProcessor>  processor;
+    std::vector<hyperion::Color>               lastPixels;
 };
 
 extern "C" {
@@ -57,8 +58,8 @@ Java_com_hyperion_grabber_HyperionNative_sendFrame(
     if (!data) return JNI_FALSE;
 
     const auto& cfg = ctx->processor->config();
-    auto pixels = ctx->processor->processRGBA(data, rowStride);
-    return ctx->client->sendFrame(pixels, cfg.targetWidth, cfg.targetHeight)
+    ctx->lastPixels = ctx->processor->processRGBA(data, rowStride);
+    return ctx->client->sendFrame(ctx->lastPixels, cfg.targetWidth, cfg.targetHeight)
            ? JNI_TRUE : JNI_FALSE;
 }
 
@@ -72,6 +73,18 @@ Java_com_hyperion_grabber_HyperionNative_destroy(
         ctx->client->disconnect();
         delete ctx;
     }
+}
+
+
+JNIEXPORT jboolean JNICALL
+Java_com_hyperion_grabber_HyperionNative_sendKeepalive(
+        JNIEnv*, jobject,
+        jlong handle) {
+    auto* ctx = reinterpret_cast<NativeContext*>(handle);
+    if (!ctx || ctx->lastPixels.empty()) return JNI_FALSE;
+    const auto& cfg = ctx->processor->config();
+    return ctx->client->sendFrame(ctx->lastPixels, cfg.targetWidth, cfg.targetHeight)
+           ? JNI_TRUE : JNI_FALSE;
 }
 
 // Sends solid-colour test frames without needing MediaProjection.

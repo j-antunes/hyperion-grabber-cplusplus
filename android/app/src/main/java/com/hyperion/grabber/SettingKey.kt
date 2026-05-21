@@ -1,3 +1,3 @@
 package com.hyperion.grabber
 
-enum class SettingKey { HOST, PORT, FPS, RESOLUTION }
+enum class SettingKey { HOST, PORT, FPS, RESOLUTION, BRIGHTNESS }

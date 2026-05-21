@@ -16,4 +16,8 @@
     <color name="btn_primary">#FF7EC8E3</color>
     <color name="btn_primary_focused">#FF4FAFD0</color>
     <color name="btn_text">#FF000000</color>
+
+    <color name="border_glow">#CC7EC8E3</color>
+    <color name="border_glow_mid">#667EC8E3</color>
+    <color name="border_glow_transparent">#007EC8E3</color>
 </resources>

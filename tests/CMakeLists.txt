@@ -11,6 +11,7 @@ FetchContent_MakeAvailable(googletest)
 add_executable(hyperion_tests
     test_frame_processor.cpp
     test_flatbuffers.cpp
+    test_black_bars.cpp
 )
 
 target_link_libraries(hyperion_tests PRIVATE hyperion_core GTest::gtest_main)

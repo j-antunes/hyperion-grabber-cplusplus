@@ -26,8 +26,51 @@ class ScreenGrabberService : Service() {
     private var imageThread: HandlerThread? = null
 
     // Frame rate tracking
-    private var frameCount = 0L
     private var frameCountStart = 0L
+    private var lastFrameSentMs = 0L
+
+    // Keepalive: resend last frame if ImageReader goes quiet (static screen)
+    private var keepaliveHandler: Handler? = null
+    private var consecutiveFailures = 0
+    private val keepaliveRunnable = object : Runnable {
+        override fun run() {
+            val h = nativeHandle
+            if (h != 0L && !isPaused) {
+                val ok = HyperionNative.sendKeepalive(h)
+                if (!ok) {
+                    Log.w(TAG, "Keepalive failed — scheduling reconnect")
+                    scheduleReconnect()
+                } else {
+                    consecutiveFailures = 0
+                    Log.d(TAG, "Keepalive sent")
+                }
+            }
+            keepaliveHandler?.postDelayed(this, KEEPALIVE_INTERVAL_MS)
+        }
+    }
+
+    private fun scheduleReconnect() {
+        if (nativeHandle != 0L) {
+            HyperionNative.destroy(nativeHandle)
+            nativeHandle = 0L
+        }
+        Log.d(TAG, "Reconnecting in ${RECONNECT_DELAY_MS}ms…")
+        keepaliveHandler?.postDelayed({
+            if (!isPaused && isRunning) {
+                nativeHandle = HyperionNative.create(
+                    captureHost, capturePort,
+                    SRC_WIDTH, SRC_HEIGHT,
+                    captureDstW, captureDstH, captureFps
+                )
+                if (nativeHandle != 0L) {
+                    Log.d(TAG, "Reconnected to Hyperion at $captureHost:$capturePort")
+                    consecutiveFailures = 0
+                } else {
+                    Log.e(TAG, "Reconnect failed — will retry")
+                }
+            }
+        }, RECONNECT_DELAY_MS)
+    }
 
     // Persisted so RESUME can restart capture with the same config
     private var captureHost = ""
@@ -40,7 +83,10 @@ class ScreenGrabberService : Service() {
         private const val TAG           = "ScreenGrabberService"
         private const val NOTIF_CHANNEL = "hyperion_grabber"
         private const val NOTIF_ID      = 1
-        private const val FRAME_LOG_INTERVAL = 100L  // log fps every 100 frames
+        private const val FRAME_LOG_INTERVAL   = 100L   // log fps every 100 frames
+        private const val KEEPALIVE_INTERVAL_MS = 3000L  // resend last frame if screen is static
+        private const val RECONNECT_DELAY_MS    = 5000L  // wait before reconnect attempt
+
 
         const val ACTION_PAUSE  = "com.hyperion.grabber.PAUSE"
         const val ACTION_RESUME = "com.hyperion.grabber.RESUME"
@@ -53,11 +99,13 @@ class ScreenGrabberService : Service() {
         const val EXTRA_TARGET_HEIGHT = "targetHeight"
         const val EXTRA_FPS           = "fps"
 
-        private const val SRC_WIDTH  = 1920
-        private const val SRC_HEIGHT = 1080
+        private const val SRC_WIDTH  = 960
+        private const val SRC_HEIGHT = 540
 
-        @Volatile var isRunning = false
-        @Volatile var isPaused  = false
+        @Volatile var isRunning  = false
+        @Volatile var isPaused   = false
+        @Volatile var frameCount = 0L
+
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -132,20 +180,32 @@ class ScreenGrabberService : Service() {
     }
 
     private fun startCapture() {
-        frameCount = 0
+        frameCount = 0L
         frameCountStart = System.currentTimeMillis()
+        lastFrameSentMs = 0L
 
         imageThread = HandlerThread("HyperionImageReader").also { it.start() }
         imageReader = ImageReader.newInstance(SRC_WIDTH, SRC_HEIGHT, PixelFormat.RGBA_8888, 2)
+        val frameIntervalMs = 1000L / captureFps
+
         imageReader!!.setOnImageAvailableListener({ reader ->
             val image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
             try {
+                val now = System.currentTimeMillis()
+                if (now - lastFrameSentMs < frameIntervalMs) return@setOnImageAvailableListener
+                lastFrameSentMs = now
                 val plane = image.planes[0]
                 val ok = HyperionNative.sendFrame(nativeHandle, plane.buffer, plane.rowStride)
                 if (!ok) {
-                    Log.w(TAG, "sendFrame returned false — Hyperion connection may have dropped")
+                    consecutiveFailures++
+                    Log.w(TAG, "sendFrame failed ($consecutiveFailures consecutive)")
+                    if (consecutiveFailures >= 3) {
+                        consecutiveFailures = 0
+                        scheduleReconnect()
+                    }
                     return@setOnImageAvailableListener
                 }
+                consecutiveFailures = 0
                 frameCount++
                 if (frameCount == 1L) {
                     Log.d(TAG, "First frame sent successfully")
@@ -167,10 +227,14 @@ class ScreenGrabberService : Service() {
             imageReader!!.surface, null, null
         )
         Log.d(TAG, "Capture started: ${SRC_WIDTH}×${SRC_HEIGHT} → ${captureDstW}×${captureDstH} @ ${captureFps}fps")
+
+        keepaliveHandler = Handler(imageThread!!.looper)
+        keepaliveHandler!!.postDelayed(keepaliveRunnable, KEEPALIVE_INTERVAL_MS)
     }
 
     private fun pauseCapture() {
         val sent = frameCount
+        keepaliveHandler?.removeCallbacks(keepaliveRunnable); keepaliveHandler = null
         virtualDisplay?.release(); virtualDisplay = null
         imageReader?.close();      imageReader    = null
         imageThread?.quitSafely(); imageThread    = null
