@@ -1,57 +1,72 @@
-# hyperion-grabber-c
+# Hyperion Grabber for Android TV
 
-Cross-platform Hyperion screen grabber written in C++.
-Targets Android TV (via NDK + JNI) and PC (Linux X11, Windows DXGI).
+An Android TV app that captures the screen and streams it to a [Hyperion.ng](https://github.com/hyperion-project/hyperion.ng) server over the flatbuffers protocol, enabling ambilight-style LED effects driven by whatever is playing on your TV.
 
-## Architecture
+## Requirements
 
-```
-core/                   Shared C++ library (no platform deps)
-  include/
-    hyperion_client.h   Hyperion flatbuffers TCP client
-    frame_processor.h   Frame downscaling (RGBA/RGB → target resolution)
-    grabber_base.h      Capture loop base class
-  src/
+- Android TV device (Android 8.0+ / API 26+)
+- [Hyperion.ng](https://github.com/hyperion-project/hyperion.ng) **2.2.1** running on your network
+- ADB enabled on the TV for sideloading
 
-android/                Android / Android TV app
-  app/src/main/
-    java/…/
-      HyperionNative.kt     JNI declarations
-      ScreenGrabberService.kt  MediaProjection capture service
-    cpp/
-      jni_bridge.cpp    Connects Kotlin MediaProjection frames → core
+## Features
 
-pc/
-  linux/x11_grabber     XGetImage-based capture (X11)
-  windows/dxgi_grabber  Desktop Duplication API capture (Windows)
-  main.cpp              CLI entry point
+- Screen capture via MediaProjection — no root required
+- Sends frames over flatbuffers (port 19400) at configurable FPS and resolution
+- Auto-detects LED count and optimal resolution from Hyperion server
+- Black bar detection — crops letterbox/pillarbox bars before sampling
+- Brightness control — adjusts Hyperion master brightness from the app
+- Schedule — auto start/stop at fixed times or based on sunset
+- Auto-reconnect if Hyperion drops the connection
+- Keepalive frames to maintain the connection on static screens
+- Gradient border glow on screen edges while streaming
 
-.devcontainer/          Dev container with build tools + Android NDK
-```
+## Installation
 
-## Building
+1. Enable ADB on your Android TV (`Settings → Device Preferences → Developer options`)
+2. Download the latest APK from [Releases](../../releases)
+3. Install via ADB:
+   ```bash
+   adb connect <tv-ip>:5555
+   adb install hyperion-grabber.apk
+   ```
+4. Open **Hyperion Grabber** on your TV
+5. Enter your Hyperion server IP and press **Start**
 
-### PC (Linux)
+## Configuration
+
+| Setting | Description |
+|---|---|
+| Host | IP address of your Hyperion server |
+| Protocol | Flatbuffer (19400), Proto (19445), or JSON (19444) |
+| FPS | Capture frame rate (default 25) |
+| Resolution | Downscale target — auto-set from Hyperion LED layout |
+| Brightness | Hyperion master brightness 0–100 |
+| Schedule | Auto start/stop by time or sunset |
+
+## Building from source
+
+### Prerequisites
+- Android SDK with NDK 27
+- CMake 3.22+
+
+### Android APK
 ```bash
-cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j$(nproc)
-./build/hyperion_grabber_linux 192.168.1.100 19400
+cd android
+./gradlew assembleDebug
+# APK: app/build/outputs/apk/debug/app-debug.apk
 ```
 
-### PC (Windows)
-```powershell
-cmake -B build
-cmake --build build --config Release
-.\build\Release\hyperion_grabber_windows.exe 192.168.1.100 19400
+### C++ unit tests
+```bash
+cmake -B build-tests -S .
+cmake --build build-tests -j$(nproc)
+cd build-tests && ctest --output-on-failure
 ```
 
-### Android (via devcontainer or Android Studio)
-Open `android/` in Android Studio. The `CMakeLists.txt` at root is wired
-via `externalNativeBuild` in `build.gradle`.
+## Compatibility
 
-## Hyperion server default port
-Flatbuffers listener: **19400**
+Tested on **Sony Bravia Android TV** with **Hyperion.ng 2.2.1**.
 
-## Limitations
-- DRM-protected content (Netflix, etc.) cannot be captured on Android — Android OS blocks it.
-- X11 grabber uses `XGetImage` (CPU path). For high FPS, a DRM/KMS or PipeWire backend is faster.
+The flatbuffers schema is pinned to Hyperion.ng 2.2.1. If you are running a different version and frames are not appearing, check that the `Command` union order matches (`Color=1, Image=2, Clear=3, Register=4`) and that priority 150 is accepted.
+
+Screen capture requires user permission via the MediaProjection dialog on first start. On Android 14, this permission cannot be granted from a background service — the app must be in the foreground when you press Start.
