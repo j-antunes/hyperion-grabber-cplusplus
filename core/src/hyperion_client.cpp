@@ -22,6 +22,9 @@
 #include <string.h>
 #include <mutex>
 #include <cstdint>
+#ifdef _WIN32
+typedef int ssize_t;
+#endif
 
 #ifdef __ANDROID__
 #include <android/log.h>
@@ -37,7 +40,7 @@ namespace hyperion {
 
 static bool recvAll(int fd, uint8_t* buf, size_t len) {
     while (len > 0) {
-        ssize_t n = ::recv(fd, buf, len, 0);
+        ssize_t n = ::recv(fd, reinterpret_cast<char*>(buf), static_cast<int>(len), 0);
         if (n <= 0) return false;
         buf += n;
         len -= static_cast<size_t>(n);
@@ -47,7 +50,7 @@ static bool recvAll(int fd, uint8_t* buf, size_t len) {
 
 static bool sendAll(int fd, const uint8_t* data, size_t len) {
     while (len > 0) {
-        ssize_t n = ::send(fd, data, len, MSG_NOSIGNAL);
+        ssize_t n = ::send(fd, reinterpret_cast<const char*>(data), static_cast<int>(len), MSG_NOSIGNAL);
         if (n <= 0) {
             LOGE("send() failed: %s (errno=%d)", strerror(errno), errno);
             return false;
