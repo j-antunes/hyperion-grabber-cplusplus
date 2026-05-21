@@ -3,12 +3,25 @@
 #include "generated/hyperion_reply_generated.h"
 
 #include <flatbuffers/flatbuffers.h>
+
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#pragma comment(lib, "ws2_32.lib")
+#define CLOSE_SOCKET(s) closesocket(s)
+#define MSG_NOSIGNAL    0
+#else
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#define CLOSE_SOCKET(s) ::close(s)
+#endif
+
 #include <errno.h>
 #include <string.h>
+#include <mutex>
+#include <cstdint>
 
 #ifdef __ANDROID__
 #include <android/log.h>
@@ -84,7 +97,12 @@ HyperionClient::HyperionClient(const std::string& host, uint16_t port, int prior
 HyperionClient::~HyperionClient() { disconnect(); }
 
 bool HyperionClient::connect() {
-    m_socket = ::socket(AF_INET, SOCK_STREAM, 0);
+#ifdef _WIN32
+    static std::once_flag wsaOnce;
+    std::call_once(wsaOnce, [] { WSADATA w; WSAStartup(MAKEWORD(2,2), &w); });
+#endif
+
+    m_socket = static_cast<int>(::socket(AF_INET, SOCK_STREAM, 0));
     if (m_socket < 0) {
         LOGE("socket() failed: %s", strerror(errno));
         return false;
@@ -95,30 +113,30 @@ bool HyperionClient::connect() {
     addr.sin_port   = htons(m_port);
     if (::inet_pton(AF_INET, m_host.c_str(), &addr.sin_addr) <= 0) {
         LOGE("inet_pton() failed for host '%s'", m_host.c_str());
-        ::close(m_socket); m_socket = -1; return false;
+        CLOSE_SOCKET(m_socket); m_socket = -1; return false;
     }
     if (::connect(m_socket, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
         LOGE("connect() to %s:%d failed: %s", m_host.c_str(), m_port, strerror(errno));
-        ::close(m_socket); m_socket = -1; return false;
+        CLOSE_SOCKET(m_socket); m_socket = -1; return false;
     }
     LOGD("TCP connected to %s:%d", m_host.c_str(), m_port);
 
     if (!sendRegister("hyperion-grabber-c", m_priority)) {
         LOGE("sendRegister failed");
-        ::close(m_socket); m_socket = -1; return false;
+        CLOSE_SOCKET(m_socket); m_socket = -1; return false;
     }
     LOGD("Register sent, waiting for reply...");
 
     if (!readReply(m_socket)) {
         LOGE("Register reply indicates failure");
-        ::close(m_socket); m_socket = -1; return false;
+        CLOSE_SOCKET(m_socket); m_socket = -1; return false;
     }
     LOGD("Registration confirmed by Hyperion");
     return true;
 }
 
 void HyperionClient::disconnect() {
-    if (m_socket >= 0) { ::close(m_socket); m_socket = -1; }
+    if (m_socket >= 0) { CLOSE_SOCKET(m_socket); m_socket = -1; }
 }
 
 bool HyperionClient::isConnected() const { return m_socket >= 0; }
