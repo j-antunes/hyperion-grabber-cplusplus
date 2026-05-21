@@ -71,7 +71,7 @@ class GrabberState {
 
         try {
             while (true) {
-                ensureActive()
+                currentCoroutineContext().ensureActive()
                 val t0 = System.currentTimeMillis()
                 val rgb = grabber.captureRgb()
                 val ok = client.sendFrame(rgb, dstW, dstH)
@@ -79,7 +79,7 @@ class GrabberState {
                 if (!ok) {
                     client.disconnect()
                     delay(5000)
-                    ensureActive()
+                    currentCoroutineContext().ensureActive()
                     if (!client.connect()) break
                     lastSentMs = System.currentTimeMillis()
                 } else {
