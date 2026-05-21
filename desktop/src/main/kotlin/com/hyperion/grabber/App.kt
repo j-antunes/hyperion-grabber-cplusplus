@@ -98,7 +98,7 @@ private fun SettingsCard(state: GrabberState) {
                 }
                 Slider(
                     value = state.brightness.toFloat(),
-                    onValueChange = { state.setBrightness(it.toInt()) },
+                    onValueChange = { state.applyBrightness(it.toInt()) },
                     valueRange = 0f..100f,
                     modifier = Modifier.fillMaxWidth(),
                     colors = SliderDefaults.colors(

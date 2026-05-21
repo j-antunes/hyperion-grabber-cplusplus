@@ -23,7 +23,7 @@ class GrabberState {
 
     fun toggle() = if (isRunning) stop() else start()
 
-    fun setBrightness(v: Int) {
+    fun applyBrightness(v: Int) {
         brightness = v.coerceIn(0, 100)
         prefs.putInt("brightness", brightness)
         scope.launch { HyperionJsonClient.setBrightness(host.trim(), brightness) }
