@@ -70,7 +70,8 @@ class GrabberState {
         var lastPixels: ByteArray? = null
 
         try {
-            while (isActive) {
+            while (true) {
+                ensureActive()
                 val t0 = System.currentTimeMillis()
                 val rgb = grabber.captureRgb()
                 val ok = client.sendFrame(rgb, dstW, dstH)
@@ -78,7 +79,7 @@ class GrabberState {
                 if (!ok) {
                     client.disconnect()
                     delay(5000)
-                    if (!isActive) break
+                    ensureActive()
                     if (!client.connect()) break
                     lastSentMs = System.currentTimeMillis()
                 } else {
