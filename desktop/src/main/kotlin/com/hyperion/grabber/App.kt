@@ -1,9 +1,12 @@
 package com.hyperion.grabber
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -25,26 +28,23 @@ private val Grey  = Color(0xFF555566)
 fun App(state: GrabberState) {
     MaterialTheme(
         colorScheme = darkColorScheme(
-            primary     = Cyan,
-            surface     = Card,
-            background  = Dark,
+            primary      = Cyan,
+            surface      = Card,
+            background   = Dark,
             onBackground = Color.White,
             onSurface    = Color.White,
         )
     ) {
         Surface(Modifier.fillMaxSize(), color = Dark) {
             Column(
-                Modifier.padding(20.dp).fillMaxSize(),
+                Modifier
+                    .padding(20.dp)
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                Text(
-                    "Hyperion Grabber",
-                    color = Cyan,
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold
-                )
+                Text("Hyperion Grabber", color = Cyan, fontSize = 20.sp, fontWeight = FontWeight.Bold)
                 SettingsCard(state)
-                Spacer(Modifier.weight(1f))
                 StatusCard(state)
             }
         }
@@ -57,42 +57,89 @@ private fun SettingsCard(state: GrabberState) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("Settings", color = Cyan, fontWeight = FontWeight.SemiBold)
 
-            OutlinedTextField(
-                value = state.host,
-                onValueChange = { state.host = it },
-                label = { Text("Hyperion Host") },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = !state.isRunning,
-                singleLine = true,
-                colors = outlinedTextFieldColors()
-            )
+            // Host row with Test button and reach indicator
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedTextField(
+                        value = state.host,
+                        onValueChange = {
+                            state.host = it
+                            state.reachStatus = ReachStatus.IDLE
+                        },
+                        label = { Text("Hyperion Host") },
+                        placeholder = { Text("e.g. 192.168.1.100", color = Grey) },
+                        modifier = Modifier.weight(1f),
+                        enabled = !state.isRunning,
+                        singleLine = true,
+                        colors = textFieldColors()
+                    )
+                    ReachDot(state.reachStatus)
+                    Button(
+                        onClick = { state.testConnection() },
+                        enabled = !state.isRunning && state.host.isNotBlank(),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A3A4A)),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                    ) {
+                        Text("Test", fontSize = 13.sp)
+                    }
+                }
+                Text(
+                    "Accepts: 192.168.1.100  ·  http://hyperion.local  ·  hostname",
+                    color = Grey,
+                    fontSize = 11.sp
+                )
+                if (state.reachStatus == ReachStatus.OK) {
+                    Text("Hyperion is reachable", color = Green, fontSize = 11.sp)
+                } else if (state.reachStatus == ReachStatus.FAIL) {
+                    Text("Cannot reach Hyperion on port 8090 — check host and that Hyperion is running", color = Red, fontSize = 11.sp)
+                }
+            }
 
+            // Port / FPS / Priority row
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
                     value = state.port,
                     onValueChange = { state.port = it },
                     label = { Text("Port") },
+                    placeholder = { Text("19400", color = Grey) },
                     modifier = Modifier.weight(1f),
                     enabled = !state.isRunning,
                     singleLine = true,
-                    colors = outlinedTextFieldColors()
+                    colors = textFieldColors()
                 )
                 OutlinedTextField(
                     value = state.fps,
                     onValueChange = { state.fps = it },
                     label = { Text("FPS") },
+                    placeholder = { Text("25", color = Grey) },
                     modifier = Modifier.weight(1f),
                     enabled = !state.isRunning,
                     singleLine = true,
-                    colors = outlinedTextFieldColors()
+                    colors = textFieldColors()
+                )
+                OutlinedTextField(
+                    value = state.priority.toString(),
+                    onValueChange = { state.priority = it.toIntOrNull()?.coerceIn(1, 255) ?: state.priority },
+                    label = { Text("Priority") },
+                    placeholder = { Text("150", color = Grey) },
+                    modifier = Modifier.weight(1f),
+                    enabled = !state.isRunning,
+                    singleLine = true,
+                    colors = textFieldColors()
                 )
             }
+            Text(
+                "Port: Hyperion flatbuffers port (default 19400)  ·  Priority: lower = higher priority (1–255)",
+                color = Grey,
+                fontSize = 11.sp
+            )
 
+            // Brightness
             Column {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     Text("Brightness", color = Color.White, modifier = Modifier.weight(1f))
                     Text("${state.brightness}%", color = Cyan, fontWeight = FontWeight.Bold)
                 }
@@ -102,25 +149,37 @@ private fun SettingsCard(state: GrabberState) {
                     valueRange = 0f..100f,
                     modifier = Modifier.fillMaxWidth(),
                     colors = SliderDefaults.colors(
-                        thumbColor = Cyan,
-                        activeTrackColor = Cyan,
-                        inactiveTrackColor = Grey
+                        thumbColor = Cyan, activeTrackColor = Cyan, inactiveTrackColor = Grey
                     )
                 )
             }
+
+            Divider(color = Grey.copy(alpha = 0.3f))
+
+            // System options
+            LabelledCheckbox(
+                checked = state.minimizeToTray,
+                onCheckedChange = { state.applyMinimizeToTray(it) },
+                label = "Minimize to tray on close"
+            )
+            LabelledCheckbox(
+                checked = state.startOnBoot,
+                onCheckedChange = { state.applyStartOnBoot(it) },
+                label = "Start automatically on system boot"
+            )
         }
     }
 }
 
 @Composable
 private fun StatusCard(state: GrabberState) {
-    val dotColor = when (state.status) {
+    val dotColor = when (state.grabStatus) {
         GrabStatus.RUNNING    -> Green
         GrabStatus.CONNECTING -> Amber
         GrabStatus.ERROR      -> Red
         GrabStatus.STOPPED    -> Grey
     }
-    val statusText = when (state.status) {
+    val statusText = when (state.grabStatus) {
         GrabStatus.RUNNING    -> "Running  ·  ↑ ${state.fpsActual} fps"
         GrabStatus.CONNECTING -> "Connecting…"
         GrabStatus.ERROR      -> "Error"
@@ -130,16 +189,13 @@ private fun StatusCard(state: GrabberState) {
     Surface(shape = RoundedCornerShape(12.dp), color = Card, modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Status", color = Cyan, fontWeight = FontWeight.SemiBold)
-
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Box(Modifier.size(10.dp).background(dotColor, CircleShape))
                 Text(statusText, color = Color.White)
             }
-
             if (state.errorMsg.isNotEmpty()) {
                 Text(state.errorMsg, color = Red, fontSize = 12.sp)
             }
-
             Button(
                 onClick = { state.toggle() },
                 modifier = Modifier.fillMaxWidth().height(48.dp),
@@ -148,25 +204,49 @@ private fun StatusCard(state: GrabberState) {
                     containerColor = if (state.isRunning) Color(0xFF6B2D2D) else Color(0xFF1F5E30)
                 )
             ) {
-                Text(
-                    if (state.isRunning) "Stop" else "Start",
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold
-                )
+                Text(if (state.isRunning) "Stop" else "Start", fontSize = 16.sp, fontWeight = FontWeight.Bold)
             }
         }
     }
 }
 
 @Composable
-private fun outlinedTextFieldColors() = OutlinedTextFieldDefaults.colors(
-    focusedBorderColor   = Cyan,
-    unfocusedBorderColor = Grey,
-    focusedLabelColor    = Cyan,
-    unfocusedLabelColor  = Grey,
-    focusedTextColor     = Color.White,
-    unfocusedTextColor   = Color.White,
-    disabledTextColor    = Color(0xFF888899),
-    disabledBorderColor  = Color(0xFF333344),
-    disabledLabelColor   = Color(0xFF555566),
+private fun ReachDot(status: ReachStatus) {
+    val color = when (status) {
+        ReachStatus.OK       -> Green
+        ReachStatus.FAIL     -> Red
+        ReachStatus.CHECKING -> Amber
+        ReachStatus.IDLE     -> Color.Transparent
+    }
+    Box(Modifier.size(10.dp).background(color, CircleShape))
+}
+
+@Composable
+private fun LabelledCheckbox(checked: Boolean, onCheckedChange: (Boolean) -> Unit, label: String) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Checkbox(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            colors = CheckboxDefaults.colors(checkedColor = Cyan, uncheckedColor = Grey)
+        )
+        Spacer(Modifier.width(4.dp))
+        Text(label, color = Color.White, fontSize = 14.sp,
+            modifier = Modifier.clickable { onCheckedChange(!checked) })
+    }
+}
+
+@Composable
+private fun textFieldColors() = OutlinedTextFieldDefaults.colors(
+    focusedBorderColor    = Cyan,
+    unfocusedBorderColor  = Grey,
+    focusedLabelColor     = Cyan,
+    unfocusedLabelColor   = Grey,
+    focusedTextColor      = Color.White,
+    unfocusedTextColor    = Color.White,
+    disabledTextColor     = Color(0xFF888899),
+    disabledBorderColor   = Color(0xFF333344),
+    disabledLabelColor    = Color(0xFF555566),
 )

@@ -4,29 +4,65 @@ import androidx.compose.runtime.*
 import kotlinx.coroutines.*
 import java.util.prefs.Preferences
 
-enum class GrabStatus { STOPPED, CONNECTING, RUNNING, ERROR }
+enum class GrabStatus   { STOPPED, CONNECTING, RUNNING, ERROR }
+enum class ReachStatus  { IDLE, CHECKING, OK, FAIL }
 
 class GrabberState {
     private val prefs = Preferences.userNodeForPackage(GrabberState::class.java)
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var job: Job? = null
 
-    var host       by mutableStateOf(prefs.get("host", ""))
-    var port       by mutableStateOf(prefs.get("port", "19400"))
-    var fps        by mutableStateOf(prefs.get("fps", "25"))
-    var brightness by mutableStateOf(prefs.getInt("brightness", 100))
-    var status     by mutableStateOf(GrabStatus.STOPPED)
-    var fpsActual  by mutableStateOf(0)
-    var errorMsg   by mutableStateOf("")
+    var host           by mutableStateOf(prefs.get("host", ""))
+    var port           by mutableStateOf(prefs.get("port", "19400"))
+    var fps            by mutableStateOf(prefs.get("fps", "25"))
+    var priority       by mutableStateOf(prefs.getInt("priority", 150))
+    var brightness     by mutableStateOf(prefs.getInt("brightness", 100))
+    var minimizeToTray by mutableStateOf(prefs.getBoolean("minimizeToTray", true))
+    var startOnBoot    by mutableStateOf(prefs.getBoolean("startOnBoot", false))
 
-    val isRunning get() = status == GrabStatus.RUNNING || status == GrabStatus.CONNECTING
+    var grabStatus    by mutableStateOf(GrabStatus.STOPPED)
+    var reachStatus   by mutableStateOf(ReachStatus.IDLE)
+    var fpsActual     by mutableStateOf(0)
+    var errorMsg      by mutableStateOf("")
+
+    val isRunning get() = grabStatus == GrabStatus.RUNNING || grabStatus == GrabStatus.CONNECTING
+
+    // Strip scheme so user can paste full URLs
+    fun normalizeHost(raw: String = host): String = raw.trim()
+        .removePrefix("https://")
+        .removePrefix("http://")
+        .trimEnd('/')
 
     fun toggle() = if (isRunning) stop() else start()
+
+    fun testConnection() {
+        val h = normalizeHost()
+        if (h.isEmpty()) { reachStatus = ReachStatus.FAIL; return }
+        scope.launch {
+            reachStatus = ReachStatus.CHECKING
+            reachStatus = if (HyperionJsonClient.ping(h)) ReachStatus.OK else ReachStatus.FAIL
+        }
+    }
 
     fun applyBrightness(v: Int) {
         brightness = v.coerceIn(0, 100)
         prefs.putInt("brightness", brightness)
-        scope.launch { HyperionJsonClient.setBrightness(host.trim(), brightness) }
+        scope.launch { HyperionJsonClient.setBrightness(normalizeHost(), brightness) }
+    }
+
+    fun applyMinimizeToTray(v: Boolean) {
+        minimizeToTray = v
+        prefs.putBoolean("minimizeToTray", v)
+    }
+
+    fun applyStartOnBoot(v: Boolean) {
+        startOnBoot = v
+        prefs.putBoolean("startOnBoot", v)
+        val os = System.getProperty("os.name", "").lowercase()
+        when {
+            os.contains("windows") -> setWindowsAutostart(v)
+            os.contains("linux")   -> setLinuxAutostart(v)
+        }
     }
 
     fun shutdown() {
@@ -35,26 +71,28 @@ class GrabberState {
     }
 
     private fun start() {
-        val h = host.trim()
+        val h = normalizeHost()
         val p = port.toIntOrNull() ?: 19400
         val f = fps.toIntOrNull()?.coerceIn(1, 60) ?: 25
+        val pr = priority.coerceIn(1, 255)
         if (h.isEmpty()) { errorMsg = "Host is required"; return }
-        prefs.put("host", h); prefs.put("port", port); prefs.put("fps", fps)
+        prefs.put("host", host); prefs.put("port", port)
+        prefs.put("fps", fps);   prefs.putInt("priority", pr)
         errorMsg = ""
-        status = GrabStatus.CONNECTING
-        job = scope.launch { runGrabber(h, p, f) }
+        grabStatus = GrabStatus.CONNECTING
+        job = scope.launch { runGrabber(h, p, pr, f) }
     }
 
     private fun stop() {
         job?.cancel(); job = null
-        status = GrabStatus.STOPPED
+        grabStatus = GrabStatus.STOPPED
         fpsActual = 0
     }
 
-    private suspend fun runGrabber(host: String, port: Int, targetFps: Int) {
-        val client = HyperionClient(host, port)
+    private suspend fun runGrabber(host: String, port: Int, priority: Int, targetFps: Int) {
+        val client = HyperionClient(host, port, priority)
         if (!client.connect()) {
-            status = GrabStatus.ERROR
+            grabStatus = GrabStatus.ERROR
             errorMsg = "Could not connect to $host:$port"
             return
         }
@@ -63,7 +101,7 @@ class GrabberState {
         val grabber = ScreenGrabber(dstW, dstH)
         val frameMs = 1000L / targetFps
 
-        status = GrabStatus.RUNNING
+        grabStatus = GrabStatus.RUNNING
         var frameCount = 0
         var lastStatsMs = System.currentTimeMillis()
         var lastSentMs  = System.currentTimeMillis() - 5000L
@@ -72,9 +110,9 @@ class GrabberState {
         try {
             while (true) {
                 currentCoroutineContext().ensureActive()
-                val t0 = System.currentTimeMillis()
+                val t0  = System.currentTimeMillis()
                 val rgb = grabber.captureRgb()
-                val ok = client.sendFrame(rgb, dstW, dstH)
+                val ok  = client.sendFrame(rgb, dstW, dstH)
 
                 if (!ok) {
                     client.disconnect()
@@ -88,7 +126,6 @@ class GrabberState {
                     frameCount++
                 }
 
-                // Keepalive: resend last frame if screen was static for 3s
                 if (System.currentTimeMillis() - lastSentMs > 3000) {
                     lastPixels?.let { client.sendFrame(it, dstW, dstH) }
                     lastSentMs = System.currentTimeMillis()
@@ -96,9 +133,7 @@ class GrabberState {
 
                 val now = System.currentTimeMillis()
                 if (now - lastStatsMs >= 1000) {
-                    fpsActual = frameCount
-                    frameCount = 0
-                    lastStatsMs = now
+                    fpsActual = frameCount; frameCount = 0; lastStatsMs = now
                 }
 
                 val delay = frameMs - (System.currentTimeMillis() - t0)
@@ -106,7 +141,31 @@ class GrabberState {
             }
         } finally {
             client.disconnect()
-            if (status == GrabStatus.RUNNING) { status = GrabStatus.STOPPED; fpsActual = 0 }
+            if (grabStatus == GrabStatus.RUNNING) { grabStatus = GrabStatus.STOPPED; fpsActual = 0 }
+        }
+    }
+
+    private fun setWindowsAutostart(enabled: Boolean) {
+        val exe = ProcessHandle.current().info().command().orElse(null) ?: return
+        val key = """HKCU\Software\Microsoft\Windows\CurrentVersion\Run"""
+        val args = if (enabled)
+            arrayOf("reg", "add", key, "/v", "HyperionGrabber", "/t", "REG_SZ", "/d", "\"$exe\"", "/f")
+        else
+            arrayOf("reg", "delete", key, "/v", "HyperionGrabber", "/f")
+        runCatching { Runtime.getRuntime().exec(args) }
+    }
+
+    private fun setLinuxAutostart(enabled: Boolean) {
+        val file = java.io.File(System.getProperty("user.home"), ".config/autostart/hyperion-grabber.desktop")
+        if (enabled) {
+            val exe = ProcessHandle.current().info().command().orElse("hyperion-grabber") ?: return
+            file.parentFile.mkdirs()
+            file.writeText(
+                "[Desktop Entry]\nType=Application\nName=Hyperion Grabber\nExec=$exe\n" +
+                "Hidden=false\nNoDisplay=false\nX-GNOME-Autostart-enabled=true\n"
+            )
+        } else {
+            file.delete()
         }
     }
 }

@@ -4,6 +4,13 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 object HyperionJsonClient {
+    fun ping(host: String): Boolean = try {
+        java.net.Socket().use { s ->
+            s.connect(java.net.InetSocketAddress(host, 8090), 2000)
+            true
+        }
+    } catch (e: Exception) { false }
+
     fun queryResolution(host: String): Pair<Int, Int>? = try {
         val conn = URL("http://$host:8090/json-rpc").openConnection() as HttpURLConnection
         conn.connectTimeout = 3000

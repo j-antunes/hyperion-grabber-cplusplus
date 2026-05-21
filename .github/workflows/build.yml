@@ -10,57 +10,28 @@ permissions:
   contents: write
 
 jobs:
-  build-windows:
+  # C++ builds: CI verification only (no release assets — GUI app replaces CLI)
+  build-windows-ci:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Configure
         run: cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
-
       - name: Build
         run: cmake --build build --config Release --target hyperion_grabber_windows
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: hyperion-grabber-windows-cli
-          path: build/Release/hyperion_grabber_windows.exe
-
-      - name: Attach to release
-        if: github.event_name == 'release'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: build/Release/hyperion_grabber_windows.exe
-
-  build-linux:
+  build-linux-ci:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Install dependencies
         run: sudo apt-get install -y libx11-dev
-
       - name: Configure
         run: cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
-
       - name: Build
         run: cmake --build build -j$(nproc)
-
       - name: Run tests
         run: cd build && ctest --output-on-failure
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: hyperion-grabber-linux-cli
-          path: build/hyperion_grabber_linux
-
-      - name: Attach to release
-        if: github.event_name == 'release'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: build/hyperion_grabber_linux
 
   build-android:
     runs-on: ubuntu-latest

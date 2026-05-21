@@ -15,7 +15,7 @@ private const val COMMAND_IMAGE: Byte    = 2
 private const val COMMAND_REGISTER: Byte = 4
 private const val IMAGE_TYPE_RAW: Byte   = 1
 
-class HyperionClient(private val host: String, private val port: Int) {
+class HyperionClient(private val host: String, private val port: Int, private val priority: Int = 150) {
     private var socket: Socket? = null
     private var output: OutputStream? = null
     private var input: InputStream? = null
@@ -25,7 +25,7 @@ class HyperionClient(private val host: String, private val port: Int) {
         socket = s
         output = s.getOutputStream()
         input  = s.getInputStream()
-        sendBuffer(buildRegister("hyperion-grabber-desktop", 150))
+        sendBuffer(buildRegister("hyperion-grabber-desktop", priority))
         readReply()
         true
     } catch (e: Exception) {
