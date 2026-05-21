@@ -25,9 +25,11 @@ public:
     // Input: raw RGBA or RGBX bytes from platform capture API
     // Output: downscaled RGB pixels ready for HyperionClient::sendFrame
     std::vector<Color> processRGBA(const uint8_t* data, int rowStride);
+    std::vector<Color> processBGRA(const uint8_t* data, int rowStride); // DXGI / Windows
     std::vector<Color> processRGB(const uint8_t* data, int rowStride);
 
     const FrameConfig& config() const { return m_config; }
+    const std::vector<Color>& lastPixels() const { return m_buffer; }
 
     // Exposed for unit tests
     static CropRect detectBlackBars(const uint8_t* rgba, int rowStride,

@@ -72,6 +72,9 @@ RUN chown -R ubuntu:ubuntu $ANDROID_HOME
 # Pre-create the X11 socket dir so Xvfb works as a non-root user
 RUN mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix
 
+# KVM access for hardware-accelerated emulator
+RUN groupadd -g 109 kvm && usermod -aG kvm ubuntu
+
 # ── Node.js 22 LTS + Claude Code CLI ─────────────────────────────────────────
 RUN wget -qO- https://deb.nodesource.com/setup_22.x | bash - && \
     apt-get install -y --no-install-recommends nodejs && \

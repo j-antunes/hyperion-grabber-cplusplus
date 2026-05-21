@@ -92,6 +92,29 @@ std::vector<Color> FrameProcessor::processRGBA(const uint8_t* data, int rowStrid
     return m_buffer;
 }
 
+// DXGI captures BGRA — swap R and B before storing
+std::vector<Color> FrameProcessor::processBGRA(const uint8_t* data, int rowStride) {
+    if (m_framesSinceCropUpdate == 0) {
+        m_crop = detectBlackBars(data, rowStride, m_config.sourceWidth, m_config.sourceHeight);
+    }
+    if (++m_framesSinceCropUpdate >= CROP_UPDATE_INTERVAL) {
+        m_framesSinceCropUpdate = 0;
+    }
+
+    const float xScale = static_cast<float>(m_crop.w) / m_config.targetWidth;
+    const float yScale = static_cast<float>(m_crop.h) / m_config.targetHeight;
+
+    for (int y = 0; y < m_config.targetHeight; ++y) {
+        int srcY = m_crop.y + static_cast<int>(y * yScale);
+        for (int x = 0; x < m_config.targetWidth; ++x) {
+            int srcX = m_crop.x + static_cast<int>(x * xScale);
+            const uint8_t* px = data + srcY * rowStride + srcX * 4;
+            m_buffer[y * m_config.targetWidth + x] = { px[2], px[1], px[0] }; // B G R → R G B
+        }
+    }
+    return m_buffer;
+}
+
 std::vector<Color> FrameProcessor::processRGB(const uint8_t* data, int rowStride) {
     const float xScale = static_cast<float>(m_config.sourceWidth)  / m_config.targetWidth;
     const float yScale = static_cast<float>(m_config.sourceHeight) / m_config.targetHeight;

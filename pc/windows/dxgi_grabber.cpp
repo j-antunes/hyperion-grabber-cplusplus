@@ -68,8 +68,7 @@ bool DXGIGrabber::captureFrame(FrameProcessor& processor) {
     if (FAILED(m_context->Map(m_stagingTex.Get(), 0, D3D11_MAP_READ, 0, &mapped)))
         return false;
 
-    // BGRA → processed RGB
-    auto pixels = processor.processRGBA(
+    auto pixels = processor.processBGRA(
         reinterpret_cast<const uint8_t*>(mapped.pData),
         mapped.RowPitch);
 

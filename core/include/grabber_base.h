@@ -30,9 +30,12 @@ protected:
 private:
     void runLoop();
 
-    std::atomic<bool> m_running{false};
-    std::thread m_thread;
+    std::atomic<bool>            m_running{false};
+    std::thread                  m_thread;
     std::unique_ptr<FrameProcessor> m_processor;
+
+    static constexpr int KEEPALIVE_SECS  = 3;
+    static constexpr int RECONNECT_SECS  = 5;
 };
 
 } // namespace hyperion
