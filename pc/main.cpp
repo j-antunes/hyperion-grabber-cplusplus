@@ -5,10 +5,7 @@
 #include "x11_grabber.h"
 #endif
 #ifdef _WIN32
-#include "dxgi_grabber.h"
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#pragma comment(lib, "ws2_32.lib")
+#include "dxgi_grabber.h"   // brings in winsock2 + WIN32_LEAN_AND_MEAN
 #else
 #include <sys/socket.h>
 #include <netinet/in.h>
