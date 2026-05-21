@@ -24,7 +24,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: hyperion-grabber-windows
+          name: hyperion-grabber-windows-cli
           path: build/Release/hyperion_grabber_windows.exe
 
       - name: Attach to release
@@ -53,7 +53,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: hyperion-grabber-linux
+          name: hyperion-grabber-linux-cli
           path: build/hyperion_grabber_linux
 
       - name: Attach to release
@@ -90,3 +90,63 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: android/app/build/outputs/apk/debug/app-debug.apk
+
+  build-desktop-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.8"
+
+      - name: Package Windows app
+        working-directory: desktop
+        run: gradle packageMsi --no-daemon
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hyperion-grabber-desktop-windows
+          path: desktop/build/compose/binaries/main/msi/*.msi
+
+      - name: Attach to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: desktop/build/compose/binaries/main/msi/*.msi
+
+  build-desktop-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.8"
+
+      - name: Package Linux app
+        working-directory: desktop
+        run: gradle packageDeb --no-daemon
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hyperion-grabber-desktop-linux
+          path: desktop/build/compose/binaries/main/deb/*.deb
+
+      - name: Attach to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: desktop/build/compose/binaries/main/deb/*.deb
