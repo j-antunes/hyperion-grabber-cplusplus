@@ -15,6 +15,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
 
 private val Cyan  = Color(0xFF7EC8E3)
 private val Dark  = Color(0xFF13131A)
@@ -53,6 +54,14 @@ fun App(state: GrabberState) {
 
 @Composable
 private fun SettingsCard(state: GrabberState) {
+    // Auto-test reachability 1s after host stops changing (mirrors Android behaviour)
+    LaunchedEffect(state.host) {
+        if (state.host.isNotBlank() && !state.isRunning) {
+            delay(1000)
+            state.testConnection()
+        }
+    }
+
     Surface(shape = RoundedCornerShape(12.dp), color = Card, modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("Settings", color = Cyan, fontWeight = FontWeight.SemiBold)
@@ -80,7 +89,7 @@ private fun SettingsCard(state: GrabberState) {
                     Button(
                         onClick = { state.testConnection() },
                         enabled = !state.isRunning && state.host.isNotBlank(),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A3A4A)),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1A5276)),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
                     ) {
                         Text("Test", fontSize = 13.sp)
@@ -201,7 +210,7 @@ private fun StatusCard(state: GrabberState) {
                 modifier = Modifier.fillMaxWidth().height(48.dp),
                 shape = RoundedCornerShape(8.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (state.isRunning) Color(0xFF6B2D2D) else Color(0xFF1F5E30)
+                    containerColor = if (state.isRunning) Color(0xFFB71C1C) else Color(0xFF1B5E20)
                 )
             ) {
                 Text(if (state.isRunning) "Stop" else "Start", fontSize = 16.sp, fontWeight = FontWeight.Bold)

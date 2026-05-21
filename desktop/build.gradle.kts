@@ -28,7 +28,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Msi, TargetFormat.Exe, TargetFormat.Deb, TargetFormat.AppImage)
             packageName = "HyperionGrabber"
-            packageVersion = "1.3.0"
+            packageVersion = "1.4.0"
             description = "Hyperion.ng screen grabber"
             windows {
                 menuGroup = "Hyperion Grabber"
