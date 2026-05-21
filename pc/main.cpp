@@ -118,13 +118,7 @@ int main(int argc, char* argv[]) {
     std::signal(SIGINT,  [](int) { g_running = false; });
     std::signal(SIGTERM, [](int) { g_running = false; });
 
-    hyperion::FrameConfig config{
-        .sourceWidth  = 1920,
-        .sourceHeight = 1080,
-        .targetWidth  = dstW,
-        .targetHeight = dstH,
-        .framerate    = fps,
-    };
+    hyperion::FrameConfig config{1920, 1080, dstW, dstH, fps};
 
     auto client = std::make_shared<hyperion::HyperionClient>(host, port);
     if (!client->connect()) {
