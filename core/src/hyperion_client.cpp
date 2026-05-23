@@ -31,6 +31,11 @@
 #include <cstdint>
 #ifdef _WIN32
 typedef int ssize_t;
+#  define SOCK_ERRNO()  WSAGetLastError()
+#  define IS_EINTR(e)   ((e) == WSAEINTR)
+#else
+#  define SOCK_ERRNO()  errno
+#  define IS_EINTR(e)   ((e) == EINTR)
 #endif
 
 #ifdef __ANDROID__
@@ -59,7 +64,7 @@ static bool sendAll(int fd, const uint8_t* data, size_t len) {
     while (len > 0) {
         ssize_t n = ::send(fd, reinterpret_cast<const char*>(data), static_cast<int>(len), MSG_NOSIGNAL);
         if (n <= 0) {
-            LOGE("send() failed: %s (errno=%d)", strerror(errno), errno);
+            LOGE("send() failed: err=%d", SOCK_ERRNO());
             return false;
         }
         data += n;
@@ -87,8 +92,9 @@ static bool drainReplies(int fd) {
         timeval tv{0, 0};
         int sel = ::select(fd + 1, &rfds, nullptr, nullptr, &tv);
         if (sel < 0) {
-            if (errno == EINTR) continue;
-            LOGE("drainReplies: select() failed: %s", strerror(errno));
+            int e = SOCK_ERRNO();
+            if (IS_EINTR(e)) continue;
+            LOGE("drainReplies: select() failed: err=%d", e);
             return false;
         }
         if (sel == 0) return true; // no data pending
@@ -100,8 +106,9 @@ static bool drainReplies(int fd) {
             LOGE("drainReplies: peer closed connection");
             return false;
         }
-        if (errno == EINTR) continue;
-        LOGE("drainReplies: recv() failed: %s (errno=%d)", strerror(errno), errno);
+        int e = SOCK_ERRNO();
+        if (IS_EINTR(e)) continue;
+        LOGE("drainReplies: recv() failed: err=%d", e);
         return false;
     }
 }
