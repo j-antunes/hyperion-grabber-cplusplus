@@ -18,6 +18,7 @@
 #define MSG_NOSIGNAL    0
 #else
 #include <sys/socket.h>
+#include <sys/select.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
@@ -71,6 +72,38 @@ static bool sendFbb(int fd, flatbuffers::FlatBufferBuilder& fbb) {
     uint32_t size = htonl(static_cast<uint32_t>(fbb.GetSize()));
     return sendAll(fd, reinterpret_cast<uint8_t*>(&size), 4)
         && sendAll(fd, fbb.GetBufferPointer(), fbb.GetSize());
+}
+
+// Non-blocking drain of any data Hyperion has sent us (replies to Image frames).
+// Returns false if the peer closed the socket or an error occurred.
+// Without this, the receive buffer fills up over time, TCP window goes to zero,
+// and Hyperion times out the connection — but our send() still succeeds against the
+// kernel buffer, so the caller never notices and reconnect never fires.
+static bool drainReplies(int fd) {
+    while (true) {
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        FD_SET(fd, &rfds);
+        timeval tv{0, 0};
+        int sel = ::select(fd + 1, &rfds, nullptr, nullptr, &tv);
+        if (sel < 0) {
+            if (errno == EINTR) continue;
+            LOGE("drainReplies: select() failed: %s", strerror(errno));
+            return false;
+        }
+        if (sel == 0) return true; // no data pending
+
+        uint8_t buf[4096];
+        ssize_t n = ::recv(fd, reinterpret_cast<char*>(buf), sizeof(buf), 0);
+        if (n > 0) continue;
+        if (n == 0) {
+            LOGE("drainReplies: peer closed connection");
+            return false;
+        }
+        if (errno == EINTR) continue;
+        LOGE("drainReplies: recv() failed: %s (errno=%d)", strerror(errno), errno);
+        return false;
+    }
 }
 
 static bool readReply(int fd) {
@@ -180,6 +213,12 @@ bool HyperionClient::sendFrame(const std::vector<Color>& pixels, int width, int 
 
     if (!sendFbb(m_socket, fbb)) {
         LOGE("sendFrame: sendFbb failed");
+        disconnect();
+        return false;
+    }
+
+    if (!drainReplies(m_socket)) {
+        disconnect();
         return false;
     }
     return true;
