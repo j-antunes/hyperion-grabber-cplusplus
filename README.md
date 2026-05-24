@@ -1,8 +1,14 @@
 # Hyperion Grabber
 
-Screen grabber for [Hyperion.ng](https://github.com/hyperion-project/hyperion.ng) — captures your screen and streams it over the flatbuffers protocol to drive ambilight-style LED effects.
+A **companion app for [Hyperion.ng](https://github.com/hyperion-project/hyperion.ng)** that captures your screen and streams it to a Hyperion server over the flatbuffers protocol, driving ambilight-style LED effects in near real-time.
 
-Available for **Android TV**, **Windows**, and **Linux**.
+Written in **C++** with a focus on **performance** and **cross-platform** support — one shared core powers builds for:
+
+- **Android TV** — sideload the `.apk` from [Releases](../../releases)
+- **Windows** — install the `.msi` from [Releases](../../releases)
+- **Linux** — install the `.deb` from [Releases](../../releases) (or build from source)
+
+All three platforms share the same `core/` library (TCP client, frame downscaler, black-bar detection) and the same flatbuffers wire protocol, so behavior stays consistent across devices.
 
 ---
 

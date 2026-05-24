@@ -3,7 +3,10 @@ package com.hyperion.grabber
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
@@ -108,32 +111,82 @@ class ScreenGrabberService : Service() {
 
     }
 
+    // Pause/resume state machine — see CaptureStateController for transitions.
+    private var captureState = CaptureStateController.State()
+
+    private val screenStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val event = when (intent?.action) {
+                Intent.ACTION_SCREEN_OFF -> CaptureStateController.Event.ScreenOff
+                Intent.ACTION_SCREEN_ON  -> CaptureStateController.Event.ScreenOn
+                else -> return
+            }
+            if (mediaProjection == null) return
+            applyEvent(event, logTagFor(event))
+        }
+    }
+
+    private fun logTagFor(event: CaptureStateController.Event) = when (event) {
+        CaptureStateController.Event.ScreenOff -> "SCREEN_OFF"
+        CaptureStateController.Event.ScreenOn  -> "SCREEN_ON"
+        CaptureStateController.Event.UserPause  -> "PAUSE"
+        CaptureStateController.Event.UserResume -> "RESUME"
+    }
+
+    private fun applyEvent(event: CaptureStateController.Event, tag: String) {
+        val result = CaptureStateController.transition(captureState, event)
+        captureState = result.state
+        isPaused = result.state.paused
+        when (result.action) {
+            CaptureStateController.Action.None -> {
+                Log.d(TAG, "$tag — no state change")
+            }
+            CaptureStateController.Action.Pause -> {
+                Log.d(TAG, "$tag — pausing capture")
+                pauseCapture()
+                updateNotification("Paused — tap Start to resume")
+            }
+            CaptureStateController.Action.PauseAndDisconnect -> {
+                Log.d(TAG, "$tag — pausing capture and dropping connection")
+                pauseCapture()
+                if (nativeHandle != 0L) {
+                    HyperionNative.destroy(nativeHandle)
+                    nativeHandle = 0L
+                }
+                updateNotification("Paused (TV off)")
+            }
+            CaptureStateController.Action.Resume -> {
+                Log.d(TAG, "$tag — resuming capture")
+                resumeCapture()
+                updateNotification("Streaming screen to Hyperion…")
+            }
+        }
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         isRunning = true
+        registerReceiver(screenStateReceiver, IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_OFF)
+            addAction(Intent.ACTION_SCREEN_ON)
+        })
         Log.d(TAG, "Service created")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_PAUSE -> {
-                Log.d(TAG, "PAUSE received — stopping capture")
-                pauseCapture()
-                isPaused = true
-                updateNotification("Paused — tap Start to resume")
+                applyEvent(CaptureStateController.Event.UserPause, "PAUSE")
                 return START_STICKY
             }
             ACTION_RESUME -> {
-                if (mediaProjection != null && isPaused) {
-                    Log.d(TAG, "RESUME received — restarting capture")
-                    resumeCapture()
-                    isPaused = false
-                    updateNotification("Streaming screen to Hyperion…")
-                } else {
-                    Log.w(TAG, "RESUME received but projection=${mediaProjection != null} paused=$isPaused — ignoring")
+                if (mediaProjection == null) {
+                    Log.w(TAG, "RESUME received but no projection — ignoring")
+                    return START_STICKY
                 }
+                applyEvent(CaptureStateController.Event.UserResume, "RESUME")
                 return START_STICKY
             }
             else -> {
@@ -173,6 +226,7 @@ class ScreenGrabberService : Service() {
                 Log.d(TAG, "MediaProjection obtained")
 
                 startCapture()
+                captureState = CaptureStateController.State()
                 isPaused = false
             }
         }
@@ -259,6 +313,7 @@ class ScreenGrabberService : Service() {
 
     override fun onDestroy() {
         Log.d(TAG, "Service destroying — total frames sent: $frameCount")
+        try { unregisterReceiver(screenStateReceiver) } catch (_: IllegalArgumentException) {}
         pauseCapture()
         mediaProjection?.stop()
         if (nativeHandle != 0L) {

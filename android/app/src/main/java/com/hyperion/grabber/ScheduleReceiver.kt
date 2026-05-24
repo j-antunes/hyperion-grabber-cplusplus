@@ -46,6 +46,21 @@ class ScheduleReceiver : BroadcastReceiver() {
                     val endHour   = prefs.getInt("scheduleEndHour", 22)
                     ScheduleManager.apply(context, mode, startHour, endHour)
                 }
+
+                // Start-on-boot: launch MainActivity so it can prompt for
+                // MediaProjection consent. Can't bypass the dialog — Android 10+
+                // forbids silent screen capture.
+                if (prefs.getBoolean("startOnBoot", false)) {
+                    val host = prefs.getString("host", "") ?: ""
+                    if (host.isNotBlank()) {
+                        context.startActivity(
+                            Intent(context, MainActivity::class.java).apply {
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                putExtra(MainActivity.EXTRA_AUTO_START, true)
+                            }
+                        )
+                    }
+                }
             }
         }
     }

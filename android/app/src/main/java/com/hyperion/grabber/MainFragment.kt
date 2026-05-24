@@ -40,11 +40,12 @@ class MainFragment : Fragment() {
     override fun onViewCreated(view: View, state: Bundle?) {
         super.onViewCreated(view, state)
 
-        bindSettingRow(view.findViewById(R.id.rowHost),       R.string.setting_host,       SettingKey.HOST)
-        bindSettingRow(view.findViewById(R.id.rowPort),       R.string.setting_port,       SettingKey.PORT)
-        bindSettingRow(view.findViewById(R.id.rowFps),        R.string.setting_fps,        SettingKey.FPS)
-        bindSettingRow(view.findViewById(R.id.rowResolution), R.string.setting_resolution, SettingKey.RESOLUTION)
-        bindSettingRow(view.findViewById(R.id.rowBrightness), R.string.setting_brightness, SettingKey.BRIGHTNESS)
+        bindSettingRow(view.findViewById(R.id.rowHost),        R.string.setting_host,          SettingKey.HOST)
+        bindSettingRow(view.findViewById(R.id.rowPort),        R.string.setting_port,          SettingKey.PORT)
+        bindSettingRow(view.findViewById(R.id.rowFps),         R.string.setting_fps,           SettingKey.FPS)
+        bindSettingRow(view.findViewById(R.id.rowResolution),  R.string.setting_resolution,    SettingKey.RESOLUTION)
+        bindSettingRow(view.findViewById(R.id.rowBrightness),  R.string.setting_brightness,    SettingKey.BRIGHTNESS)
+        bindSettingRow(view.findViewById(R.id.rowStartOnBoot), R.string.setting_start_on_boot, SettingKey.START_ON_BOOT)
 
         val rowSchedule    = view.findViewById<View>(R.id.rowSchedule)
         rowSchedule.findViewById<TextView>(R.id.settingLabel).setText(R.string.setting_schedule)
@@ -85,6 +86,12 @@ class MainFragment : Fragment() {
         }
         vm.brightness.observe(viewLifecycleOwner) {
             updateRow(view.findViewById(R.id.rowBrightness), "$it%")
+        }
+        vm.startOnBoot.observe(viewLifecycleOwner) { enabled ->
+            updateRow(
+                view.findViewById(R.id.rowStartOnBoot),
+                getString(if (enabled) R.string.boot_start_on else R.string.boot_start_off)
+            )
         }
 
         fun refreshScheduleRow() {
@@ -179,8 +186,9 @@ class MainFragment : Fragment() {
     }
 
     private fun showEditDialog(key: SettingKey) {
-        if (key == SettingKey.PORT)        { showProtocolPicker();   return }
-        if (key == SettingKey.BRIGHTNESS)  { showBrightnessSlider(); return }
+        if (key == SettingKey.PORT)          { showProtocolPicker();   return }
+        if (key == SettingKey.BRIGHTNESS)    { showBrightnessSlider(); return }
+        if (key == SettingKey.START_ON_BOOT) { showStartOnBootDialog(); return }
 
         val (title, hint, inputType, current) = when (key) {
             SettingKey.HOST -> EditMeta(
@@ -199,7 +207,8 @@ class MainFragment : Fragment() {
                 InputType.TYPE_CLASS_NUMBER,
                 vm.targetWidth.value?.toString() ?: "64"
             )
-            SettingKey.BRIGHTNESS -> EditMeta("", "", 0, "") // unreachable — handled above
+            SettingKey.BRIGHTNESS    -> EditMeta("", "", 0, "") // unreachable — handled above
+            SettingKey.START_ON_BOOT -> EditMeta("", "", 0, "") // unreachable — handled above
         }
 
         val editText = EditText(requireContext()).apply {
@@ -389,8 +398,27 @@ class MainFragment : Fragment() {
             SettingKey.RESOLUTION -> raw.toIntOrNull()?.coerceIn(8, 256)?.let { w ->
                 vm.saveResolution(w, (w * 9 / 16).coerceAtLeast(8))
             }
-            SettingKey.BRIGHTNESS -> raw.toIntOrNull()?.let { vm.saveBrightness(it) }
+            SettingKey.BRIGHTNESS    -> raw.toIntOrNull()?.let { vm.saveBrightness(it) }
+            SettingKey.START_ON_BOOT -> Unit // handled by dedicated dialog
         }
+    }
+
+    private fun showStartOnBootDialog() {
+        val ctx = requireContext()
+        val current = vm.startOnBoot.value ?: false
+        val labels = arrayOf(
+            getString(R.string.boot_start_off),
+            getString(R.string.boot_start_on),
+        )
+        AlertDialog.Builder(ctx)
+            .setTitle(R.string.setting_start_on_boot)
+            .setMessage(R.string.boot_start_dialog_message)
+            .setSingleChoiceItems(labels, if (current) 1 else 0) { dialog, which ->
+                vm.saveStartOnBoot(which == 1)
+                dialog.dismiss()
+            }
+            .setNegativeButton(R.string.edit_cancel, null)
+            .show()
     }
 
     private data class EditMeta(

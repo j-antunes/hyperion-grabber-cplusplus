@@ -38,6 +38,7 @@ class GrabberViewModel(app: Application) : AndroidViewModel(app) {
     val scheduleEndHour   = MutableLiveData(prefs.getInt("scheduleEndHour", 22))
 
     val brightness      = MutableLiveData(prefs.getInt("brightness", 100))
+    val startOnBoot     = MutableLiveData(prefs.getBoolean("startOnBoot", false))
 
     val grabberStatus   = MutableLiveData(GrabberStatus.IDLE)
     val connectionState = MutableLiveData<ConnectionState>(ConnectionState.Idle)
@@ -79,6 +80,11 @@ class GrabberViewModel(app: Application) : AndroidViewModel(app) {
             .putInt("scheduleEndHour", endHour)
             .apply()
         ScheduleManager.apply(context, mode, startHour, endHour)
+    }
+
+    fun saveStartOnBoot(v: Boolean) {
+        startOnBoot.value = v
+        prefs.edit().putBoolean("startOnBoot", v).apply()
     }
 
     fun saveBrightness(v: Int) {

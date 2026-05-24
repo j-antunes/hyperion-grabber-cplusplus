@@ -1,6 +1,16 @@
 # hyperion-grabber-cplusplus
 
-Android TV screen grabber that sends frames to a [Hyperion.ng](https://github.com/hyperion-project/hyperion.ng) server over the flatbuffers protocol (TCP port 19400).
+Android TV screen grabber that sends frames to a [Hyperion.ng](https://github.com/hyperion-project/hyperion.ng) server over the flatbuffers protocol (TCP port 19400). Also ships PC binaries for Linux (X11) and Windows (DXGI).
+
+## Keep all three platforms in sync
+
+Android, Linux, and Windows are first-class targets — when adding or changing a behavior, port it to all three (and update the C++ tests / Kotlin tests that cover it) instead of leaving platform drift behind. Examples of behaviors that must stay aligned:
+
+- Pause/resume on screen power-off (Android: `SCREEN_OFF`/`SCREEN_ON`; Linux: X11 DPMS; Windows: `WM_POWERBROADCAST` / `GUID_CONSOLE_DISPLAY_STATE`).
+- Reconnect strategy on a dropped TCP socket.
+- The `drainReplies()` contract in `HyperionClient` — any new transport-layer fix must work on both POSIX and Winsock paths.
+
+If a feature genuinely doesn't apply to a platform (e.g. an Android-only schedule UI), call that out in the commit message or a code comment so it's a deliberate skip, not an oversight.
 
 ## Project layout
 

@@ -14,6 +14,7 @@ class MainActivity : FragmentActivity() {
 
     companion object {
         private const val REQ_MEDIA_PROJECTION = 100
+        const val EXTRA_AUTO_START = "auto_start"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -25,6 +26,20 @@ class MainActivity : FragmentActivity() {
             supportFragmentManager.beginTransaction()
                 .replace(R.id.fragment_container, MainFragment())
                 .commit()
+        }
+
+        if (intent?.getBooleanExtra(EXTRA_AUTO_START, false) == true) {
+            requestProjection()
+        }
+    }
+
+    // singleTask launchMode: a second launch with the auto-start extra (e.g. from
+    // ScheduleReceiver after boot) lands here instead of in onCreate.
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.getBooleanExtra(EXTRA_AUTO_START, false)) {
+            requestProjection()
         }
     }
 

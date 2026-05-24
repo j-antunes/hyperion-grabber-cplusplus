@@ -8,6 +8,10 @@
     <string name="setting_resolution">Resolution</string>
     <string name="setting_schedule">Schedule</string>
     <string name="setting_brightness">Brightness</string>
+    <string name="setting_start_on_boot">Start on boot</string>
+    <string name="boot_start_on">On</string>
+    <string name="boot_start_off">Off</string>
+    <string name="boot_start_dialog_message">When the TV powers on, the app will open and ask once for the screen-capture permission. After you tap \"Start now\", the grabber begins automatically.\n\n(Android does not allow the permission to be granted silently.)</string>
 
     <string name="status_idle">Idle</string>
     <string name="status_checking">Checking…</string>

@@ -57,6 +57,9 @@
                 <View android:layout_width="match_parent" android:layout_height="1dp"
                     android:background="@color/divider" android:layout_marginHorizontal="16dp"/>
                 <include layout="@layout/row_setting" android:id="@+id/rowBrightness" />
+                <View android:layout_width="match_parent" android:layout_height="1dp"
+                    android:background="@color/divider" android:layout_marginHorizontal="16dp"/>
+                <include layout="@layout/row_setting" android:id="@+id/rowStartOnBoot" />
 
             </LinearLayout>
 
