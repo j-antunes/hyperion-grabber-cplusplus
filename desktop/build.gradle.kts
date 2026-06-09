@@ -13,13 +13,18 @@ repositories {
 }
 
 kotlin {
-    jvmToolchain(17)
+    jvmToolchain(21)
 }
 
 dependencies {
     implementation(compose.desktop.currentOs)
     implementation(compose.material3)
     implementation("com.google.flatbuffers:flatbuffers-java:24.3.25")
+    testImplementation(kotlin("test"))
+}
+
+tasks.test {
+    useJUnitPlatform()
 }
 
 compose.desktop {

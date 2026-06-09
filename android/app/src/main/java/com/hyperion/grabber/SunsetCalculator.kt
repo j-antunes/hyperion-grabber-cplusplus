@@ -11,7 +11,8 @@ object SunsetCalculator {
     fun getSunsetHour(): Int {
         val cal = Calendar.getInstance()
         return computeSunsetHour(
-            tzOffsetHours = TimeZone.getDefault().rawOffset / 3_600_000.0,
+            // getOffset includes DST; rawOffset would be an hour off all summer
+            tzOffsetHours = TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 3_600_000.0,
             dayOfYear     = cal.get(Calendar.DAY_OF_YEAR)
         )
     }

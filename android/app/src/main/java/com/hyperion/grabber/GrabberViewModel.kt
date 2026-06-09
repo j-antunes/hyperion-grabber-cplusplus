@@ -43,10 +43,29 @@ class GrabberViewModel(app: Application) : AndroidViewModel(app) {
     val grabberStatus   = MutableLiveData(GrabberStatus.IDLE)
     val connectionState = MutableLiveData<ConnectionState>(ConnectionState.Idle)
     val testLedState    = MutableLiveData<String?>(null)  // null=idle, "..."=message
+    val serviceError    = ScreenGrabberService.lastError
 
     private var checkJob: Job? = null
 
-    init { checkConnection() }
+    // The service reports what actually happened (connect failures, external
+    // projection revocation) — mirror it instead of assuming start succeeded.
+    private val serviceStatusObserver = androidx.lifecycle.Observer<ScreenGrabberService.Status> { st ->
+        grabberStatus.value = when (st) {
+            ScreenGrabberService.Status.CONNECTING,
+            ScreenGrabberService.Status.RUNNING -> GrabberStatus.RUNNING
+            else                                -> GrabberStatus.IDLE
+        }
+    }
+
+    init {
+        ScreenGrabberService.statusLive.observeForever(serviceStatusObserver)
+        checkConnection()
+    }
+
+    override fun onCleared() {
+        ScreenGrabberService.statusLive.removeObserver(serviceStatusObserver)
+        super.onCleared()
+    }
 
     fun saveHost(v: String) {
         host.value = v
@@ -64,10 +83,12 @@ class GrabberViewModel(app: Application) : AndroidViewModel(app) {
         prefs.edit().putInt("fps", v).apply()
     }
 
-    fun saveResolution(w: Int, h: Int) {
+    fun saveResolution(w: Int, h: Int, fromUser: Boolean = false) {
         targetWidth.value  = w
         targetHeight.value = h
-        prefs.edit().putInt("targetWidth", w).putInt("targetHeight", h).apply()
+        val edit = prefs.edit().putInt("targetWidth", w).putInt("targetHeight", h)
+        if (fromUser) edit.putBoolean("resolutionUserSet", true)
+        edit.apply()
     }
 
     fun saveSchedule(context: Context, mode: ScheduleMode, startHour: Int, endHour: Int) {
@@ -107,8 +128,15 @@ class GrabberViewModel(app: Application) : AndroidViewModel(app) {
             val result = HyperionJsonClient.queryServerInfo(host.value!!)
             connectionState.value = result.fold(
                 onSuccess = { info ->
-                    saveResolution(info.recommendedWidth, info.recommendedHeight)
-                    ConnectionState.Connected(info.ledCount, info.recommendedWidth, info.recommendedHeight)
+                    // Don't clobber a resolution the user set manually
+                    if (!prefs.getBoolean("resolutionUserSet", false)) {
+                        saveResolution(info.recommendedWidth, info.recommendedHeight)
+                    }
+                    ConnectionState.Connected(
+                        info.ledCount,
+                        targetWidth.value ?: info.recommendedWidth,
+                        targetHeight.value ?: info.recommendedHeight
+                    )
                 },
                 onFailure = { ConnectionState.Failed(it.message ?: "Unknown error") }
             )
@@ -126,8 +154,8 @@ class GrabberViewModel(app: Application) : AndroidViewModel(app) {
             putExtra(ScreenGrabberService.EXTRA_TARGET_HEIGHT, targetHeight.value ?: 36)
             putExtra(ScreenGrabberService.EXTRA_FPS, fps.value ?: 25)
         }
+        // grabberStatus follows the service's statusLive — no optimistic update
         context.startForegroundService(intent)
-        grabberStatus.value = GrabberStatus.RUNNING
     }
 
     // Resume a paused service (no permission dialog needed)
@@ -137,7 +165,6 @@ class GrabberViewModel(app: Application) : AndroidViewModel(app) {
                 action = ScreenGrabberService.ACTION_RESUME
             }
         )
-        grabberStatus.value = GrabberStatus.RUNNING
     }
 
     fun testLeds() {
@@ -157,6 +184,5 @@ class GrabberViewModel(app: Application) : AndroidViewModel(app) {
                 action = ScreenGrabberService.ACTION_PAUSE
             }
         )
-        grabberStatus.value = GrabberStatus.IDLE
     }
 }

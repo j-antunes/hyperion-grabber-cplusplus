@@ -20,13 +20,16 @@
 #include <sys/socket.h>
 #include <sys/select.h>
 #include <netinet/in.h>
+#include <netdb.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <fcntl.h>
 #define CLOSE_SOCKET(s) ::close(s)
 #endif
 
 #include <errno.h>
 #include <string.h>
+#include <stdio.h>
 #include <mutex>
 #include <cstdint>
 #ifdef _WIN32
@@ -49,6 +52,92 @@ typedef int ssize_t;
 #endif
 
 namespace hyperion {
+
+static bool setNonBlocking(int fd, bool nonBlocking) {
+#ifdef _WIN32
+    u_long mode = nonBlocking ? 1 : 0;
+    return ioctlsocket(fd, FIONBIO, &mode) == 0;
+#else
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags < 0) return false;
+    flags = nonBlocking ? (flags | O_NONBLOCK) : (flags & ~O_NONBLOCK);
+    return fcntl(fd, F_SETFL, flags) == 0;
+#endif
+}
+
+static void setSocketTimeouts(int fd, int timeoutMs) {
+#ifdef _WIN32
+    DWORD t = static_cast<DWORD>(timeoutMs);
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&t), sizeof(t));
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&t), sizeof(t));
+#else
+    timeval tv{ timeoutMs / 1000, (timeoutMs % 1000) * 1000 };
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+#endif
+}
+
+int connectTcp(const std::string& host, uint16_t port, int timeoutMs) {
+#ifdef _WIN32
+    static std::once_flag wsaOnce;
+    std::call_once(wsaOnce, [] { WSADATA w; WSAStartup(MAKEWORD(2,2), &w); });
+#endif
+
+    addrinfo hints{};
+    hints.ai_family   = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    addrinfo* res = nullptr;
+    char portStr[8];
+    snprintf(portStr, sizeof(portStr), "%u", static_cast<unsigned>(port));
+    int rc = ::getaddrinfo(host.c_str(), portStr, &hints, &res);
+    if (rc != 0 || !res) {
+        LOGE("could not resolve host '%s' (getaddrinfo rc=%d)", host.c_str(), rc);
+        return -1;
+    }
+
+    int fd = -1;
+    for (addrinfo* ai = res; ai; ai = ai->ai_next) {
+        fd = static_cast<int>(::socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol));
+        if (fd < 0) continue;
+
+        // Non-blocking connect so an unreachable host fails after timeoutMs
+        // instead of hanging for the OS default (often minutes).
+        setNonBlocking(fd, true);
+        int c = ::connect(fd, ai->ai_addr, static_cast<int>(ai->ai_addrlen));
+#ifdef _WIN32
+        bool pending = (c < 0 && WSAGetLastError() == WSAEWOULDBLOCK);
+#else
+        bool pending = (c < 0 && errno == EINPROGRESS);
+#endif
+        if (c == 0 || pending) {
+            bool ok = true;
+            if (pending) {
+                fd_set wfds;
+                FD_ZERO(&wfds);
+                FD_SET(fd, &wfds);
+                timeval tv{ timeoutMs / 1000, (timeoutMs % 1000) * 1000 };
+                int sel = ::select(fd + 1, nullptr, &wfds, nullptr, &tv);
+                int soErr = -1;
+                socklen_t len = sizeof(soErr);
+                if (sel > 0)
+                    ::getsockopt(fd, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&soErr), &len);
+                ok = (sel > 0 && soErr == 0);
+            }
+            if (ok) {
+                setNonBlocking(fd, false);
+                setSocketTimeouts(fd, timeoutMs);
+                break;
+            }
+        }
+        CLOSE_SOCKET(fd);
+        fd = -1;
+    }
+    ::freeaddrinfo(res);
+
+    if (fd < 0)
+        LOGE("connect to %s:%u failed or timed out", host.c_str(), static_cast<unsigned>(port));
+    return fd;
+}
 
 static bool recvAll(int fd, uint8_t* buf, size_t len) {
     while (len > 0) {
@@ -146,39 +235,23 @@ HyperionClient::HyperionClient(const std::string& host, uint16_t port, int prior
 HyperionClient::~HyperionClient() { disconnect(); }
 
 bool HyperionClient::connect() {
-#ifdef _WIN32
-    static std::once_flag wsaOnce;
-    std::call_once(wsaOnce, [] { WSADATA w; WSAStartup(MAKEWORD(2,2), &w); });
-#endif
+    disconnect();
 
-    m_socket = static_cast<int>(::socket(AF_INET, SOCK_STREAM, 0));
-    if (m_socket < 0) {
-        LOGE("socket() failed: %s", strerror(errno));
-        return false;
-    }
-
-    sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_port   = htons(m_port);
-    if (::inet_pton(AF_INET, m_host.c_str(), &addr.sin_addr) <= 0) {
-        LOGE("inet_pton() failed for host '%s'", m_host.c_str());
-        CLOSE_SOCKET(m_socket); m_socket = -1; return false;
-    }
-    if (::connect(m_socket, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
-        LOGE("connect() to %s:%d failed: %s", m_host.c_str(), m_port, strerror(errno));
-        CLOSE_SOCKET(m_socket); m_socket = -1; return false;
-    }
+    m_socket = connectTcp(m_host, m_port, CONNECT_TIMEOUT_MS);
+    if (m_socket < 0) return false;
     LOGD("TCP connected to %s:%d", m_host.c_str(), m_port);
 
     if (!sendRegister("hyperion-grabber-c", m_priority)) {
         LOGE("sendRegister failed");
-        CLOSE_SOCKET(m_socket); m_socket = -1; return false;
+        disconnect();
+        return false;
     }
     LOGD("Register sent, waiting for reply...");
 
     if (!readReply(m_socket)) {
         LOGE("Register reply indicates failure");
-        CLOSE_SOCKET(m_socket); m_socket = -1; return false;
+        disconnect();
+        return false;
     }
     LOGD("Registration confirmed by Hyperion");
     return true;
@@ -190,8 +263,14 @@ void HyperionClient::disconnect() {
 
 bool HyperionClient::isConnected() const { return m_socket >= 0; }
 
-bool HyperionClient::sendFrame(const std::vector<Color>& pixels, int width, int height, int /*priority*/) {
+bool HyperionClient::sendFrame(const std::vector<Color>& pixels, int width, int height) {
     if (!isConnected()) return false;
+
+    if (!drainReplies(m_socket)) {
+        LOGE("sendFrame: server closed the connection");
+        disconnect();
+        return false;
+    }
 
     std::vector<uint8_t> rgb(pixels.size() * 3);
     for (size_t i = 0; i < pixels.size(); ++i) {

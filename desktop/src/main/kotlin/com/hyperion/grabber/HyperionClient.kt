@@ -41,15 +41,27 @@ class HyperionClient(private val host: String, private val port: Int, private va
     fun isConnected() = socket?.isConnected == true && socket?.isClosed == false
 
     fun sendFrame(rgb: ByteArray, width: Int, height: Int): Boolean = try {
+        drainReplies()
         sendBuffer(buildImageFrame(rgb, width, height))
         true
     } catch (e: Exception) {
         false
     }
 
+    // Hyperion replies to every message, including each Image frame. Discard
+    // pending replies so the receive buffer never fills up.
+    private val drainBuf = ByteArray(1024)
+    private fun drainReplies() {
+        val inp = input ?: return
+        while (inp.available() > 0) {
+            if (inp.read(drainBuf) < 0) throw EOFException()
+        }
+    }
+
     // --- flatbuffers builders ---
 
-    private fun buildRegister(origin: String, priority: Int): ByteArray {
+    // internal for FlatbufferWireTest — verifies the handcrafted layout
+    internal fun buildRegister(origin: String, priority: Int): ByteArray {
         val fbb = FlatBufferBuilder(256)
         val originOff = fbb.createString(origin)
         // Register { origin:string[0], priority:int[1] }
@@ -66,7 +78,7 @@ class HyperionClient(private val host: String, private val port: Int, private va
         return fbb.sizedByteArray()
     }
 
-    private fun buildImageFrame(rgb: ByteArray, width: Int, height: Int): ByteArray {
+    internal fun buildImageFrame(rgb: ByteArray, width: Int, height: Int): ByteArray {
         val fbb = FlatBufferBuilder(rgb.size + 256)
         val dataOff = fbb.createByteVector(rgb)
         // RawImage { data:[ubyte][0], width:int[1], height:int[2] }

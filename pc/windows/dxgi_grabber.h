@@ -25,7 +25,7 @@ public:
 protected:
     bool initCapture() override;
     void deinitCapture() override;
-    bool captureFrame(FrameProcessor& processor) override;
+    CaptureResult captureFrame(FrameProcessor& processor) override;
 
 private:
     Microsoft::WRL::ComPtr<ID3D11Device>           m_device;

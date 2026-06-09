@@ -11,6 +11,9 @@ object ScheduleManager {
     private const val REQ_START = 1001
     private const val REQ_STOP  = 1002
 
+    // One-shot alarms, re-armed by ScheduleReceiver each time one fires.
+    // A repeating alarm would freeze SUNSET mode at whatever sunset hour was
+    // computed on the day the schedule was saved.
     fun apply(context: Context, mode: ScheduleMode, startHour: Int, endHour: Int) {
         cancel(context)
         if (mode == ScheduleMode.OFF) return
@@ -18,16 +21,14 @@ object ScheduleManager {
         val actualStartHour = if (mode == ScheduleMode.SUNSET) SunsetCalculator.getSunsetHour() else startHour
         val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
 
-        am.setInexactRepeating(
+        am.set(
             AlarmManager.RTC_WAKEUP,
             nextOccurrence(actualStartHour),
-            AlarmManager.INTERVAL_DAY,
             buildIntent(context, ScheduleReceiver.ACTION_SCHEDULE_START, REQ_START)
         )
-        am.setInexactRepeating(
+        am.set(
             AlarmManager.RTC_WAKEUP,
             nextOccurrence(endHour),
-            AlarmManager.INTERVAL_DAY,
             buildIntent(context, ScheduleReceiver.ACTION_SCHEDULE_STOP, REQ_STOP)
         )
     }

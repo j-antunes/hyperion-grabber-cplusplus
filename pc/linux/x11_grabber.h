@@ -15,7 +15,7 @@ public:
 protected:
     bool initCapture() override;
     void deinitCapture() override;
-    bool captureFrame(FrameProcessor& processor) override;
+    CaptureResult captureFrame(FrameProcessor& processor) override;
 
 private:
     Display* m_display = nullptr;

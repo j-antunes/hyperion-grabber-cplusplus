@@ -62,7 +62,7 @@ class MainActivity : FragmentActivity() {
     @Suppress("OVERRIDE_DEPRECATION")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == REQ_MEDIA_PROJECTION && data != null) {
+        if (requestCode == REQ_MEDIA_PROJECTION && resultCode == RESULT_OK && data != null) {
             vm.startGrabber(this, resultCode, data)
         }
     }

@@ -8,8 +8,6 @@
 #include "dxgi_grabber.h"   // brings in winsock2 + WIN32_LEAN_AND_MEAN
 #else
 #include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
 #include <unistd.h>
 #endif
 
@@ -30,11 +28,6 @@ static std::pair<int,int> queryResolution(const std::string& host,
                                           int& outLedCount) {
     outLedCount = 0;
 
-#ifdef _WIN32
-    WSADATA wsa;
-    WSAStartup(MAKEWORD(2,2), &wsa);
-#endif
-
     auto cleanup = [&](int fd) {
 #ifdef _WIN32
         closesocket(fd);
@@ -43,17 +36,9 @@ static std::pair<int,int> queryResolution(const std::string& host,
 #endif
     };
 
-    int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    // connectTcp resolves hostnames and applies a connect timeout
+    int fd = hyperion::connectTcp(host, 19444, 3000);
     if (fd < 0) return {64, 36};
-
-    sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_port   = htons(19444);
-    ::inet_pton(AF_INET, host.c_str(), &addr.sin_addr);
-
-    if (::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
-        cleanup(fd); return {64, 36};
-    }
 
     const char* req = "{\"command\":\"serverinfo\",\"subscribe\":[]}\n";
     ::send(fd, req, static_cast<int>(strlen(req)), 0);
@@ -87,11 +72,11 @@ static std::pair<int,int> queryResolution(const std::string& host,
 int main(int argc, char* argv[]) {
     if (argc < 3) {
         std::cerr << "Usage: hyperion_grabber <host> <port> [fps] [width] [height]\n"
-                  << "  host   Hyperion server IP\n"
+                  << "  host   Hyperion server IP or hostname\n"
                   << "  port   Flatbuffers port (default 19400)\n"
                   << "  fps    Capture FPS (default 25)\n"
                   << "  width  Target width  (auto-detected if omitted)\n"
-                  << "  height Target height (auto-detected if omitted)\n";
+                  << "  height Target height (16:9 of width if omitted)\n";
         return 1;
     }
 
@@ -102,9 +87,9 @@ int main(int argc, char* argv[]) {
     int ledCount = 0;
     int dstW, dstH;
 
-    if (argc > 5) {
+    if (argc > 4) {
         dstW = std::stoi(argv[4]);
-        dstH = std::stoi(argv[5]);
+        dstH = argc > 5 ? std::stoi(argv[5]) : std::max(1, dstW * 9 / 16);
     } else {
         std::cout << "Querying Hyperion at " << host << ":19444…\n";
         auto [w, h] = queryResolution(host, ledCount);
@@ -118,6 +103,8 @@ int main(int argc, char* argv[]) {
     std::signal(SIGINT,  [](int) { g_running = false; });
     std::signal(SIGTERM, [](int) { g_running = false; });
 
+    // Source size is a placeholder — the grabber corrects it to the real
+    // screen resolution in initCapture().
     hyperion::FrameConfig config{1920, 1080, dstW, dstH, fps};
 
     auto client = std::make_shared<hyperion::HyperionClient>(host, port);
@@ -140,7 +127,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    std::cout << "Capturing " << config.sourceWidth << "×" << config.sourceHeight
+    std::cout << "Capturing " << grabber.config().sourceWidth << "×" << grabber.config().sourceHeight
               << " → " << dstW << "×" << dstH << " @ " << fps << " fps\n"
               << "Streaming to " << host << ":" << port << "\n"
               << "Press Ctrl+C to stop.\n";

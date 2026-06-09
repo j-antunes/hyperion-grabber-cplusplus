@@ -151,6 +151,12 @@ class MainFragment : Fragment() {
             btnTestLeds.isEnabled = msg == null || !msg.startsWith("Sending")
         }
 
+        vm.serviceError.observe(viewLifecycleOwner) { err ->
+            if (!err.isNullOrBlank()) {
+                android.widget.Toast.makeText(requireContext(), err, android.widget.Toast.LENGTH_LONG).show()
+            }
+        }
+
         btnStartStop.setOnClickListener {
             if (vm.grabberStatus.value == GrabberViewModel.GrabberStatus.RUNNING)
                 vm.stopGrabber(requireContext())
@@ -396,7 +402,7 @@ class MainFragment : Fragment() {
             SettingKey.PORT       -> raw.toIntOrNull()?.coerceIn(1, 65535)?.let { vm.savePort(it) }
             SettingKey.FPS        -> raw.toIntOrNull()?.coerceIn(1, 60)?.let { vm.saveFps(it) }
             SettingKey.RESOLUTION -> raw.toIntOrNull()?.coerceIn(8, 256)?.let { w ->
-                vm.saveResolution(w, (w * 9 / 16).coerceAtLeast(8))
+                vm.saveResolution(w, (w * 9 / 16).coerceAtLeast(8), fromUser = true)
             }
             SettingKey.BRIGHTNESS    -> raw.toIntOrNull()?.let { vm.saveBrightness(it) }
             SettingKey.START_ON_BOOT -> Unit // handled by dedicated dialog

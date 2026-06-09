@@ -11,6 +11,10 @@ android/app/build/
 android/app/.cxx/
 android/local.properties
 
+# ── Desktop build output ──────────────────────────────────────────────────────
+desktop/.gradle/
+desktop/build/
+
 # ── Generated flatbuffers headers ─────────────────────────────────────────────
 # Kept in the repo so Android cross-compile works without a prior native build.
 # core/include/generated/
