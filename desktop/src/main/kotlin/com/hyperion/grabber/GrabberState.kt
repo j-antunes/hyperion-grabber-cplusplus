@@ -89,6 +89,10 @@ class GrabberState {
         fpsActual = 0
     }
 
+    // Monotonic millis — wall clock (currentTimeMillis) can jump under NTP
+    // sync and would stall or burst the frame pacing below.
+    private fun monoMs() = System.nanoTime() / 1_000_000
+
     private suspend fun runGrabber(host: String, port: Int, priority: Int, targetFps: Int) {
         val client = HyperionClient(host, port, priority)
         if (!client.connect()) {
@@ -103,14 +107,14 @@ class GrabberState {
 
         grabStatus = GrabStatus.RUNNING
         var frameCount = 0
-        var lastStatsMs = System.currentTimeMillis()
-        var lastSentMs  = System.currentTimeMillis() - 5000L
+        var lastStatsMs = monoMs()
+        var lastSentMs  = monoMs() - 5000L
         var lastPixels: ByteArray? = null
+        var nextFrameDueMs = monoMs()
 
         try {
             while (true) {
                 currentCoroutineContext().ensureActive()
-                val t0  = System.currentTimeMillis()
                 val rgb = grabber.captureRgb()
                 val ok  = client.sendFrame(rgb, dstW, dstH)
 
@@ -119,25 +123,33 @@ class GrabberState {
                     delay(5000)
                     currentCoroutineContext().ensureActive()
                     if (!client.connect()) break
-                    lastSentMs = System.currentTimeMillis()
+                    lastSentMs = monoMs()
+                    nextFrameDueMs = monoMs()
                 } else {
                     lastPixels = rgb
-                    lastSentMs = System.currentTimeMillis()
+                    lastSentMs = monoMs()
                     frameCount++
                 }
 
-                if (System.currentTimeMillis() - lastSentMs > 3000) {
+                if (monoMs() - lastSentMs > 3000) {
                     lastPixels?.let { client.sendFrame(it, dstW, dstH) }
-                    lastSentMs = System.currentTimeMillis()
+                    lastSentMs = monoMs()
                 }
 
-                val now = System.currentTimeMillis()
+                val now = monoMs()
                 if (now - lastStatsMs >= 1000) {
                     fpsActual = frameCount; frameCount = 0; lastStatsMs = now
                 }
 
-                val delay = frameMs - (System.currentTimeMillis() - t0)
-                if (delay > 0) delay(delay)
+                // Sleep toward an absolute deadline instead of anchoring to
+                // this iteration's start: per-iteration anchoring lets sleep
+                // overshoot accumulate, landing the real rate below targetFps
+                // (same class of bug as the Android vsync-quantization fix).
+                // The clamp keeps a stall (slow capture) from bursting to
+                // catch up afterwards.
+                nextFrameDueMs = maxOf(nextFrameDueMs + frameMs, now)
+                val sleepMs = nextFrameDueMs - monoMs()
+                if (sleepMs > 0) delay(sleepMs)
             }
         } finally {
             client.disconnect()

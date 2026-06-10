@@ -17,6 +17,7 @@ import android.media.projection.MediaProjectionManager
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
+import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.lifecycle.MutableLiveData
@@ -28,6 +29,7 @@ class ScreenGrabberService : Service() {
     // Touched only on ioThread (except in onDestroy after the thread is joined)
     private var nativeHandle: Long = 0
     private var lastFrameSentMs = 0L
+    private var nextFrameDueMs = 0L
     private var consecutiveFailures = 0
 
     private var mediaProjection: MediaProjection? = null
@@ -105,7 +107,7 @@ class ScreenGrabberService : Service() {
                     } else {
                         Log.w(TAG, "Reconnect failed — will retry in ${KEEPALIVE_INTERVAL_MS}ms")
                     }
-                } else if (System.currentTimeMillis() - lastFrameSentMs >= KEEPALIVE_INTERVAL_MS) {
+                } else if (SystemClock.uptimeMillis() - lastFrameSentMs >= KEEPALIVE_INTERVAL_MS) {
                     if (HyperionNative.sendKeepalive(nativeHandle)) {
                         Log.d(TAG, "Keepalive sent")
                     } else {
@@ -255,8 +257,9 @@ class ScreenGrabberService : Service() {
     // gate frame delivery with isPaused.
     private fun startCapture() {
         frameCount = 0L
-        frameCountStart = System.currentTimeMillis()
+        frameCountStart = SystemClock.uptimeMillis()
         lastFrameSentMs = 0L
+        nextFrameDueMs = 0L
         consecutiveFailures = 0
 
         imageReader = ImageReader.newInstance(SRC_WIDTH, SRC_HEIGHT, PixelFormat.RGBA_8888, 2)
@@ -266,8 +269,15 @@ class ScreenGrabberService : Service() {
             val image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
             try {
                 if (isPaused || nativeHandle == 0L) return@setOnImageAvailableListener
-                val now = System.currentTimeMillis()
-                if (now - lastFrameSentMs < frameIntervalMs) return@setOnImageAvailableListener
+                val now = SystemClock.uptimeMillis()
+                if (now < nextFrameDueMs) return@setOnImageAvailableListener
+                // Advance the deadline by a fixed interval instead of anchoring
+                // to `now`: arrivals are quantized to the panel's vsync, so
+                // anchoring rounds the interval up to a whole vsync multiple
+                // (40ms → 50ms on 60Hz, i.e. 20fps instead of 25). The clamp
+                // keeps a static-screen gap from banking more than one frame
+                // of catch-up.
+                nextFrameDueMs = maxOf(nextFrameDueMs + frameIntervalMs, now - frameIntervalMs)
                 lastFrameSentMs = now
                 val plane = image.planes[0]
                 val ok = HyperionNative.sendFrame(nativeHandle, plane.buffer, plane.rowStride)
@@ -287,7 +297,7 @@ class ScreenGrabberService : Service() {
                     Log.d(TAG, "First frame sent successfully")
                 }
                 if (frameCount % FRAME_LOG_INTERVAL == 0L) {
-                    val elapsed = (System.currentTimeMillis() - frameCountStart) / 1000.0
+                    val elapsed = (SystemClock.uptimeMillis() - frameCountStart) / 1000.0
                     val fps = if (elapsed > 0) frameCount / elapsed else 0.0
                     Log.d(TAG, "Sent $frameCount frames, avg %.1f fps".format(fps))
                 }
@@ -340,6 +350,7 @@ class ScreenGrabberService : Service() {
                 lastError.postValue("Could not reconnect to $captureHost:$capturePort")
             }
             lastFrameSentMs = 0L
+            nextFrameDueMs = 0L
             // (Re)start the keepalive loop either way — it retries the
             // connection until it succeeds or we're paused again.
             ioHandler.removeCallbacks(keepaliveRunnable)

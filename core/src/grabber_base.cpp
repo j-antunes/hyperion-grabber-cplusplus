@@ -1,4 +1,5 @@
 #include "grabber_base.h"
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 
@@ -42,10 +43,9 @@ void GrabberBase::runLoop() {
     const int fps = m_config.framerate > 0 ? m_config.framerate : 25;
     const auto frameInterval = microsec(1'000'000 / fps);
     auto lastSent = clock::now();
+    auto nextFrameDue = clock::now();
 
     while (m_running) {
-        auto t0 = clock::now();
-
         CaptureResult res = captureFrame(*m_processor);
         bool sendFailed = (res == CaptureResult::Failed);
 
@@ -75,12 +75,17 @@ void GrabberBase::runLoop() {
                     printf("[grabber] reconnect failed, will retry\n");
             }
             lastSent = clock::now();
+            nextFrameDue = clock::now();
             continue;
         }
 
-        auto elapsed = clock::now() - t0;
-        if (elapsed < frameInterval)
-            std::this_thread::sleep_for(frameInterval - elapsed);
+        // Sleep toward an absolute deadline instead of anchoring to this
+        // iteration's start: per-iteration anchoring lets sleep overshoot
+        // accumulate, landing the real rate below the target fps (mirrors
+        // the Android/desktop pacing fix). The clamp keeps a stall (slow
+        // capture) from bursting to catch up afterwards.
+        nextFrameDue = std::max(nextFrameDue + frameInterval, clock::now());
+        std::this_thread::sleep_until(nextFrameDue);
     }
 }
 
