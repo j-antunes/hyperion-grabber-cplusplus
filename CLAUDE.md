@@ -1,14 +1,15 @@
 # hyperion-grabber-cplusplus
 
-Android TV screen grabber that sends frames to a [Hyperion.ng](https://github.com/hyperion-project/hyperion.ng) server over the flatbuffers protocol (TCP port 19400). Also ships PC binaries for Linux (X11) and Windows (DXGI).
+Android TV screen grabber that sends frames to a [Hyperion.ng](https://github.com/hyperion-project/hyperion.ng) server over the flatbuffers protocol (TCP port 19400). PC releases ship the Compose Desktop app in `desktop/` (MSI for Windows, deb for Linux); the C++ PC binaries in `pc/` (X11/DXGI) are built in CI for verification only and are not released.
 
-## Keep all three platforms in sync
+## Keep all platforms in sync
 
-Android, Linux, and Windows are first-class targets — when adding or changing a behavior, port it to all three (and update the C++ tests / Kotlin tests that cover it) instead of leaving platform drift behind. Examples of behaviors that must stay aligned:
+Android (Kotlin + JNI C++), the desktop JVM app, and the C++ PC grabbers (Linux X11, Windows DXGI) are first-class targets — when adding or changing a behavior, port it to all of them (and update the C++ tests / Kotlin tests that cover it) instead of leaving platform drift behind. Examples of behaviors that must stay aligned:
 
 - Pause/resume on screen power-off (Android: `SCREEN_OFF`/`SCREEN_ON`; Linux: X11 DPMS; Windows: `WM_POWERBROADCAST` / `GUID_CONSOLE_DISPLAY_STATE`).
 - Reconnect strategy on a dropped TCP socket.
 - The `drainReplies()` contract in `HyperionClient` — any new transport-layer fix must work on both POSIX and Winsock paths.
+- Frame pacing: monotonic clock + absolute next-frame deadline (Android `ScreenGrabberService`, desktop `GrabberState.runGrabber`, C++ `GrabberBase::runLoop`). Wall-clock pacing or anchoring the sleep to the iteration start reintroduces below-target frame rates.
 
 If a feature genuinely doesn't apply to a platform (e.g. an Android-only schedule UI), call that out in the commit message or a code comment so it's a deliberate skip, not an oversight.
 
@@ -53,12 +54,31 @@ android/
         ScheduleReceiver.kt     BroadcastReceiver for schedule + BOOT_COMPLETED
         SettingKey.kt           SharedPreferences key constants
     src/test/java/com/hyperion/grabber/
+        BrightnessTest.kt
+        CaptureStateControllerTest.kt
         ResolutionTest.kt
         SunsetCalculatorTest.kt
+desktop/
+  build.gradle.kts          Compose Desktop (Kotlin JVM, toolchain 21) — packages MSI/deb/dmg
+  settings.gradle.kts       foojay resolver auto-provisions the JDK 21 toolchain
+  src/main/kotlin/com/hyperion/grabber/
+    Main.kt                 Entry point + tray icon
+    App.kt                  Compose UI
+    GrabberState.kt         Settings, capture loop, reconnect, frame pacing
+    ScreenGrabber.kt        java.awt.Robot capture + downscale
+    HyperionClient.kt       Flatbuffers TCP client (JVM twin of core/ C++ client)
+    HyperionJsonClient.kt   JSON API helper
+  src/test/kotlin/com/hyperion/grabber/
+    FlatbufferWireTest.kt   Regression: wire format must match Hyperion.ng 2.2.1
 tests/
   CMakeLists.txt            Google Test via FetchContent
   test_flatbuffers.cpp      Regression: Command union values must match Hyperion.ng 2.2.1
   test_frame_processor.cpp
+  test_hyperion_client.cpp
+  test_black_bars.cpp
+.github/workflows/
+  build.yml                 CI: C++ builds+ctest, Android tests+APK, desktop tests+MSI/deb;
+                            release builds attach APK/MSI/deb to the GitHub release
 .devcontainer/
   Dockerfile                Ubuntu + Android SDK/NDK + Xvfb + emulator
   devcontainer.json         --privileged, DISPLAY=:99, postCreate=setup.sh
@@ -84,6 +104,18 @@ cmake --build build-tests -j$(nproc)
 cd build-tests && ctest --output-on-failure
 ```
 
+### Desktop app
+
+```bash
+cd desktop
+gradle test          # unit tests (FlatbufferWireTest)
+gradle run           # launch the app
+gradle packageMsi    # Windows installer (on Windows)
+gradle packageDeb    # Linux package (on Linux)
+```
+
+There is no Gradle wrapper in `desktop/` — CI installs Gradle 8.8. Locally you can reuse the Android wrapper: `../android/gradlew <task>`. Gradle 8.8 itself must run on JDK ≤ 21 (its Kotlin DSL breaks on newer JVMs); the JDK 21 *toolchain* for compilation is auto-downloaded via the foojay resolver.
+
 ### C++ cross-compile note
 
 When `CMAKE_CROSSCOMPILING=ON` (Android NDK build), `flatc` is not available. The generated headers in `core/include/generated/` are committed to the repo and used directly. To regenerate them, run a native host build first.
@@ -93,7 +125,7 @@ When `CMAKE_CROSSCOMPILING=ON` (Android NDK build), `flatc` is not available. Th
 ```bash
 adb connect <tv-ip>:5555
 adb -s <tv-ip>:5555 install -r android/app/build/outputs/apk/debug/app-debug.apk
-adb -s <tv-ip>:5555 logcat -s HyperionGrabber
+adb -s <tv-ip>:5555 logcat -s ScreenGrabberService HyperionClient HyperionJsonClient
 ```
 
 ## Hyperion.ng protocol — critical notes
