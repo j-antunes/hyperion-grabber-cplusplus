@@ -31,7 +31,10 @@ compose.desktop {
     application {
         mainClass = "com.hyperion.grabber.MainKt"
         nativeDistributions {
-            targetFormats(TargetFormat.Msi, TargetFormat.Exe, TargetFormat.Deb, TargetFormat.AppImage)
+            // AppImage is rejected at configuration time on macOS, which broke
+            // every Gradle invocation (even `test`) for local development on
+            // Mac. CI only packages Msi/Deb; Dmg covers local Mac builds.
+            targetFormats(TargetFormat.Msi, TargetFormat.Exe, TargetFormat.Deb, TargetFormat.Dmg)
             packageName = "HyperionGrabber"
             packageVersion = "1.4.0"
             description = "Hyperion.ng screen grabber"
