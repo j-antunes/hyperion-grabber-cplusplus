@@ -107,8 +107,12 @@ jobs:
           $exe = "C:\Program Files\HyperionGrabber\HyperionGrabber.exe"
           if (-not (Test-Path $exe)) { throw "Installed executable not found at $exe" }
 
-          # Confirm the bundled runtime matches the app's Java 21 bytecode.
-          & "C:\Program Files\HyperionGrabber\runtime\bin\java.exe" -version
+          # jpackage strips the standalone java.exe launcher from the bundled
+          # runtime (the native exe loads jvm.dll directly), so just confirm the
+          # runtime was bundled. The real check is whether the exe launches below.
+          if (-not (Test-Path "C:\Program Files\HyperionGrabber\runtime\bin\server\jvm.dll")) {
+            throw "Bundled JVM runtime missing under C:\Program Files\HyperionGrabber\runtime"
+          }
 
           $env:SKIKO_RENDER_API = "SOFTWARE"   # CI runners have no GPU
           $proc = Start-Process $exe -PassThru
