@@ -36,7 +36,7 @@ compose.desktop {
             // Mac. CI only packages Msi/Deb; Dmg covers local Mac builds.
             targetFormats(TargetFormat.Msi, TargetFormat.Exe, TargetFormat.Deb, TargetFormat.Dmg)
             packageName = "HyperionGrabber"
-            packageVersion = "1.9.0"
+            packageVersion = "1.10.0"
             description = "Hyperion.ng screen grabber"
             windows {
                 menuGroup = "Hyperion Grabber"
