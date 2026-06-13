@@ -73,7 +73,10 @@ jobs:
 
       - uses: actions/setup-java@v4
         with:
-          java-version: '17'
+          # Must match desktop/build.gradle.kts jvmToolchain(21): jpackage bundles
+          # the JDK that runs Gradle, and a JDK 17 runtime cannot load the app's
+          # Java 21 bytecode (UnsupportedClassVersionError -> silent crash on launch).
+          java-version: '21'
           distribution: 'temurin'
 
       - uses: gradle/actions/setup-gradle@v4
@@ -83,6 +86,42 @@ jobs:
       - name: Package Windows app
         working-directory: desktop
         run: gradle packageMsi --no-daemon
+
+      # Install the MSI and launch the app to prove it actually starts. A startup
+      # crash (e.g. a JDK/bytecode mismatch, missing jlink module, or Skiko init
+      # failure) exits the process within seconds; a healthy app stays alive in
+      # the tray. This gates the release upload below.
+      - name: Smoke test (install + launch)
+        working-directory: desktop
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem build/compose/binaries/main/msi/*.msi | Select-Object -First 1
+          if (-not $msi) { throw "No MSI produced by packageMsi" }
+          Write-Host "Installing $($msi.FullName)"
+          $install = Start-Process msiexec -ArgumentList "/i `"$($msi.FullName)`" /qn /norestart /l*v install.log" -Wait -PassThru
+          if ($install.ExitCode -ne 0) {
+            Get-Content install.log -Tail 80
+            throw "MSI install failed with exit code $($install.ExitCode)"
+          }
+
+          $exe = "C:\Program Files\HyperionGrabber\HyperionGrabber.exe"
+          if (-not (Test-Path $exe)) { throw "Installed executable not found at $exe" }
+
+          # Confirm the bundled runtime matches the app's Java 21 bytecode.
+          & "C:\Program Files\HyperionGrabber\runtime\bin\java.exe" -version
+
+          $env:SKIKO_RENDER_API = "SOFTWARE"   # CI runners have no GPU
+          $proc = Start-Process $exe -PassThru
+          Start-Sleep -Seconds 15
+          $alive = Get-Process -Id $proc.Id -ErrorAction SilentlyContinue
+          if (-not $alive) {
+            Write-Host "App exited within 15s — recent Application event-log errors:"
+            Get-WinEvent -FilterHashtable @{LogName='Application'; Level=2; StartTime=(Get-Date).AddMinutes(-5)} -ErrorAction SilentlyContinue |
+              Format-List TimeCreated, ProviderName, Message
+            throw "App did not stay running — crash on startup"
+          }
+          Write-Host "App still running after 15s — launch OK"
+          Stop-Process -Id $proc.Id -Force
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -103,7 +142,9 @@ jobs:
 
       - uses: actions/setup-java@v4
         with:
-          java-version: '17'
+          # Match desktop/build.gradle.kts jvmToolchain(21) so the bundled
+          # runtime can load the app's Java 21 bytecode. See windows job note.
+          java-version: '21'
           distribution: 'temurin'
 
       - uses: gradle/actions/setup-gradle@v4
