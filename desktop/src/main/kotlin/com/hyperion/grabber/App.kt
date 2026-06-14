@@ -87,12 +87,12 @@ private fun SettingsCard(state: GrabberState) {
                     )
                     ReachDot(state.reachStatus)
                     Button(
-                        onClick = { state.testConnection() },
+                        onClick = { state.testLeds() },
                         enabled = !state.isRunning && state.host.isNotBlank(),
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1A5276)),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
                     ) {
-                        Text("Test", fontSize = 13.sp)
+                        Text("Test LEDs", fontSize = 13.sp)
                     }
                 }
                 Text(
@@ -103,7 +103,7 @@ private fun SettingsCard(state: GrabberState) {
                 if (state.reachStatus == ReachStatus.OK) {
                     Text("Hyperion is reachable", color = Green, fontSize = 11.sp)
                 } else if (state.reachStatus == ReachStatus.FAIL) {
-                    Text("Cannot reach Hyperion on port 8090 — check host and that Hyperion is running", color = Red, fontSize = 11.sp)
+                    Text("Cannot reach Hyperion — check host, port, and that Hyperion is running", color = Red, fontSize = 11.sp)
                 }
             }
 

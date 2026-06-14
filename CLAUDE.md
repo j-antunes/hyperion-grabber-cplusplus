@@ -10,6 +10,8 @@ Android (Kotlin + JNI C++), the desktop JVM app, and the C++ PC grabbers (Linux 
 - Reconnect strategy on a dropped TCP socket.
 - The `drainReplies()` contract in `HyperionClient` — any new transport-layer fix must work on both POSIX and Winsock paths.
 - Frame pacing: monotonic clock + absolute next-frame deadline (Android `ScreenGrabberService`, desktop `GrabberState.runGrabber`, C++ `GrabberBase::runLoop`). Wall-clock pacing or anchoring the sleep to the iteration start reintroduces below-target frame rates.
+- "Test LEDs" button: flash solid red/green/blue/black frames so the user gets visible confirmation (Android `HyperionNative.testConnection`, desktop `GrabberState.testLeds`). A silent reachability ping is not a substitute.
+- Windows screen capture must use DXGI Desktop Duplication, not GDI/`java.awt.Robot`: Robot's BitBlt makes the hardware mouse cursor flicker during continuous capture. C++ uses `pc/windows/dxgi_grabber.cpp`; the desktop JVM app uses the JNI helper `desktop/native/dxgi_jni.cpp` (falling back to Robot on Linux/macOS, which don't have this issue).
 
 If a feature genuinely doesn't apply to a platform (e.g. an Android-only schedule UI), call that out in the commit message or a code comment so it's a deliberate skip, not an oversight.
 
@@ -61,11 +63,15 @@ android/
 desktop/
   build.gradle.kts          Compose Desktop (Kotlin JVM, toolchain 21) — packages MSI/deb/dmg
   settings.gradle.kts       foojay resolver auto-provisions the JDK 21 toolchain
+  native/
+    dxgi_jni.cpp            Windows DXGI Desktop Duplication capture, exposed via JNI
+    CMakeLists.txt          Standalone build (JNI + d3d11/dxgi); CI bundles the DLL
   src/main/kotlin/com/hyperion/grabber/
-    Main.kt                 Entry point + tray icon
+    Main.kt                 Entry point + tray icon (Swing JPopupMenu, native L&F)
     App.kt                  Compose UI
-    GrabberState.kt         Settings, capture loop, reconnect, frame pacing
-    ScreenGrabber.kt        java.awt.Robot capture + downscale
+    GrabberState.kt         Settings, capture loop, reconnect, frame pacing, testLeds()
+    ScreenGrabber.kt        Capture + downscale: DXGI on Windows, Robot elsewhere
+    WindowsCapture.kt       JNI loader/bridge to native/dxgi_jni.cpp
     HyperionClient.kt       Flatbuffers TCP client (JVM twin of core/ C++ client)
     HyperionJsonClient.kt   JSON API helper
   src/test/kotlin/com/hyperion/grabber/

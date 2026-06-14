@@ -83,6 +83,21 @@ jobs:
         with:
           gradle-version: "8.8"
 
+      # Build the native DXGI capture helper and drop it into the app resources
+      # so jpackage bundles it into the MSI. The Kotlin side extracts and loads
+      # it at runtime (ScreenGrabber/WindowsCapture); without it the app falls
+      # back to java.awt.Robot capture.
+      - name: Build native DXGI capture library
+        shell: pwsh
+        run: |
+          cmake -B desktop/native/build -S desktop/native -DCMAKE_BUILD_TYPE=Release
+          cmake --build desktop/native/build --config Release
+          $dll = Get-ChildItem desktop/native/build -Recurse -Filter hyperion_capture_jni.dll | Select-Object -First 1
+          if (-not $dll) { throw "Native capture DLL was not produced" }
+          New-Item -ItemType Directory -Force -Path desktop/src/main/resources/native | Out-Null
+          Copy-Item $dll.FullName desktop/src/main/resources/native/
+          Write-Host "Bundled $($dll.FullName)"
+
       - name: Package Windows app
         working-directory: desktop
         run: gradle packageMsi --no-daemon

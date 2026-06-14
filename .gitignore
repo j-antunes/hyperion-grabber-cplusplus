@@ -14,6 +14,9 @@ android/local.properties
 # ── Desktop build output ──────────────────────────────────────────────────────
 desktop/.gradle/
 desktop/build/
+desktop/native/build/
+# Native DXGI capture DLL is built per-release in CI and bundled into resources.
+desktop/src/main/resources/native/
 
 # ── Generated flatbuffers headers ─────────────────────────────────────────────
 # Kept in the repo so Android cross-compile works without a prior native build.

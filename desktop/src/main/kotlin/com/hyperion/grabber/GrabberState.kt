@@ -35,6 +35,8 @@ class GrabberState {
 
     fun toggle() = if (isRunning) stop() else start()
 
+    // Quiet reachability check used by the auto-test when the host field
+    // changes — pings the JSON/web port without disturbing the LEDs.
     fun testConnection() {
         val h = normalizeHost()
         if (h.isEmpty()) { reachStatus = ReachStatus.FAIL; return }
@@ -42,6 +44,48 @@ class GrabberState {
             reachStatus = ReachStatus.CHECKING
             reachStatus = if (HyperionJsonClient.ping(h)) ReachStatus.OK else ReachStatus.FAIL
         }
+    }
+
+    // Test button: flash the LEDs solid red/green/blue/black so the user gets
+    // visible confirmation, mirroring Android's "Test LEDs" (8 frames per colour
+    // at 25 fps over the flatbuffers port). Disabled while the grabber runs.
+    fun testLeds() {
+        val h = normalizeHost()
+        val p = port.toIntOrNull() ?: 19400
+        val pr = priority.coerceIn(1, 255)
+        if (h.isEmpty()) { reachStatus = ReachStatus.FAIL; return }
+        scope.launch {
+            reachStatus = ReachStatus.CHECKING
+            val client = HyperionClient(h, p, pr)
+            if (!client.connect()) { reachStatus = ReachStatus.FAIL; return@launch }
+            val w = 16; val ht = 16
+            val colors = listOf(
+                byteArrayOf(255.toByte(), 0, 0),  // red
+                byteArrayOf(0, 255.toByte(), 0),  // green
+                byteArrayOf(0, 0, 255.toByte()),  // blue
+                byteArrayOf(0, 0, 0),             // black (clears)
+            )
+            var ok = true
+            try {
+                for (c in colors) {
+                    val frame = solidColorFrame(c, w, ht)
+                    repeat(8) {
+                        if (!client.sendFrame(frame, w, ht)) ok = false
+                        delay(40)  // 25 fps
+                    }
+                }
+            } finally {
+                client.disconnect()
+            }
+            reachStatus = if (ok) ReachStatus.OK else ReachStatus.FAIL
+        }
+    }
+
+    private fun solidColorFrame(rgb: ByteArray, w: Int, h: Int): ByteArray {
+        val buf = ByteArray(w * h * 3)
+        var i = 0
+        while (i < buf.size) { buf[i] = rgb[0]; buf[i + 1] = rgb[1]; buf[i + 2] = rgb[2]; i += 3 }
+        return buf
     }
 
     fun applyBrightness(v: Int) {
@@ -152,6 +196,7 @@ class GrabberState {
                 if (sleepMs > 0) delay(sleepMs)
             }
         } finally {
+            grabber.close()
             client.disconnect()
             if (grabStatus == GrabStatus.RUNNING) { grabStatus = GrabStatus.STOPPED; fpsActual = 0 }
         }
