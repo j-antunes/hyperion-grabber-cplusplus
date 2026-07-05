@@ -81,22 +81,30 @@ object HyperionJsonClient {
             }
         }
 
-    suspend fun setBrightness(host: String, brightness: Int) =
+    suspend fun setBrightness(host: String, brightness: Int): Result<Unit> =
         withContext(Dispatchers.IO) {
             runCatching {
-                val body = """{"command":"adjustment","adjustment":{"brightness":$brightness,"id":"default"}}"""
-                val url = java.net.URL("http://$host:8090/json-rpc")
-                val conn = url.openConnection() as java.net.HttpURLConnection
-                conn.requestMethod = "POST"
-                conn.setRequestProperty("Content-Type", "application/json")
-                conn.doOutput = true
-                conn.connectTimeout = TIMEOUT_MS
-                conn.readTimeout = TIMEOUT_MS
-                conn.outputStream.bufferedWriter().use { it.write(body) }
-                val response = conn.inputStream.bufferedReader().readText()
-                val json = JSONObject(response)
-                check(json.optBoolean("success", false)) { "Hyperion rejected brightness change" }
-                Log.d(TAG, "Brightness set to $brightness")
+                // Send over the raw JSON-RPC socket (19444), not cleartext HTTP on
+                // 8090: HttpURLConnection is blocked by the platform's default
+                // no-cleartext policy on API 28+, which silently broke this.
+                Socket().use { socket ->
+                    socket.connect(InetSocketAddress(host, JSON_PORT), TIMEOUT_MS)
+                    socket.soTimeout = TIMEOUT_MS
+
+                    val writer = socket.getOutputStream().bufferedWriter()
+                    val reader = socket.getInputStream().bufferedReader()
+
+                    val body = """{"command":"adjustment","adjustment":{"brightness":$brightness,"id":"default"}}"""
+                    writer.write(body); writer.write("\n"); writer.flush()
+
+                    val line = reader.readLine() ?: error("Empty response from Hyperion JSON server")
+                    val json = JSONObject(line)
+                    check(json.optBoolean("success", false)) {
+                        json.optString("error", "Hyperion rejected brightness change")
+                    }
+                    Log.d(TAG, "Brightness set to $brightness")
+                    Unit
+                }
             }
         }
 

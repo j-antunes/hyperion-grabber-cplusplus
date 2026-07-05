@@ -26,6 +26,7 @@ Java_com_hyperion_grabber_HyperionNative_create(
         jint fps) {
 
     const char* hostStr = env->GetStringUTFChars(host, nullptr);
+    if (!hostStr) return 0; // OOM; JVM has a pending exception
     auto* ctx = new NativeContext();
 
     ctx->client = std::make_unique<hyperion::HyperionClient>(
@@ -58,6 +59,19 @@ Java_com_hyperion_grabber_HyperionNative_sendFrame(
     if (!data) return JNI_FALSE;
 
     const auto& cfg = ctx->processor->config();
+
+    // The processor reads up to sourceHeight full rows of rowStride bytes. If the
+    // ImageReader geometry ever disagrees with the size frozen at create() (a TV
+    // display-mode switch, a projection resize), reading past the buffer would be
+    // a silent native OOB read — fail cleanly instead.
+    const jlong needed = static_cast<jlong>(cfg.sourceHeight) * rowStride;
+    const jlong capacity = env->GetDirectBufferCapacity(buffer);
+    if (capacity < 0 || needed > capacity) {
+        LOGE("sendFrame: buffer too small (need %lld, have %lld)",
+             static_cast<long long>(needed), static_cast<long long>(capacity));
+        return JNI_FALSE;
+    }
+
     ctx->lastPixels = ctx->processor->processRGBA(data, rowStride);
     return ctx->client->sendFrame(ctx->lastPixels, cfg.targetWidth, cfg.targetHeight)
            ? JNI_TRUE : JNI_FALSE;
@@ -95,6 +109,7 @@ Java_com_hyperion_grabber_HyperionNative_testConnection(
         jstring host, jint port) {
 
     const char* hostStr = env->GetStringUTFChars(host, nullptr);
+    if (!hostStr) return env->NewStringUTF("Out of memory");
     hyperion::HyperionClient client(std::string(hostStr), static_cast<uint16_t>(port), 150);
     env->ReleaseStringUTFChars(host, hostStr);
 

@@ -11,7 +11,7 @@
     <string name="setting_start_on_boot">Start on boot</string>
     <string name="boot_start_on">On</string>
     <string name="boot_start_off">Off</string>
-    <string name="boot_start_dialog_message">When the TV powers on, the app will open and ask once for the screen-capture permission. After you tap \"Start now\", the grabber begins automatically.\n\n(Android does not allow the permission to be granted silently.)</string>
+    <string name="boot_start_dialog_message">When the TV powers on, the app tries to open and ask once for the screen-capture permission, then starts the grabber automatically.\n\nNote: Android 10+ blocks apps from launching themselves at boot unless \"Display over other apps\" is allowed for this app. If start-on-boot does nothing, grant that permission in Settings, or just open the app once after the TV starts.</string>
 
     <string name="status_idle">Idle</string>
     <string name="status_checking">Checking…</string>

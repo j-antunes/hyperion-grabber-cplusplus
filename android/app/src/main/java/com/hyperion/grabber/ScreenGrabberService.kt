@@ -173,23 +173,43 @@ class ScreenGrabberService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
+        // A sticky restart re-delivers a null intent, but the MediaProjection token
+        // cannot be recovered after process death (Android 10+). There is nothing
+        // useful to restart, and onCreate() has already set isRunning=true, so left
+        // alone this becomes a zombie service that blocks the UI's Start button —
+        // stop it instead.
+        if (intent == null) {
+            Log.w(TAG, "Restarted with a null intent — projection is gone, stopping")
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
+        when (intent.action) {
             ACTION_PAUSE -> {
                 applyEvent(CaptureStateController.Event.UserPause, "PAUSE")
-                return START_STICKY
             }
             ACTION_RESUME -> {
                 if (mediaProjection == null) {
                     Log.w(TAG, "RESUME received but no projection — ignoring")
-                    return START_STICKY
+                } else {
+                    applyEvent(CaptureStateController.Event.UserResume, "RESUME")
                 }
-                applyEvent(CaptureStateController.Event.UserResume, "RESUME")
-                return START_STICKY
             }
             else -> {
-                val resultCode = intent?.getIntExtra(EXTRA_RESULT_CODE, -1) ?: return START_NOT_STICKY
                 val resultData = intent.getParcelableExtra<Intent>(EXTRA_RESULT_DATA)
-                    ?: return START_NOT_STICKY
+                if (resultData == null) {
+                    Log.e(TAG, "Start intent missing projection data — stopping")
+                    stopSelf()
+                    return START_NOT_STICKY
+                }
+                // Ignore a duplicate start while a projection is already active:
+                // overwriting it would leak the old ImageReader/VirtualDisplay and
+                // native client and schedule a second keepalive loop.
+                if (mediaProjection != null) {
+                    Log.w(TAG, "Start received while already capturing — ignoring")
+                    return START_NOT_STICKY
+                }
+                val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, -1)
 
                 captureHost = intent.getStringExtra(EXTRA_HOST) ?: captureHost
                 capturePort = intent.getIntExtra(EXTRA_PORT, capturePort)
@@ -230,7 +250,10 @@ class ScreenGrabberService : Service() {
                 }
             }
         }
-        return START_STICKY
+        // Never sticky: without the (unrecoverable) projection token a restart
+        // cannot resume capture, and a sticky FGS that never calls startForeground
+        // would crash on Android 12+.
+        return START_NOT_STICKY
     }
 
     // ioThread only

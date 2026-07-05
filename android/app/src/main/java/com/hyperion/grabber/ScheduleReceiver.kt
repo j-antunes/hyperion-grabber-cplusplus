@@ -42,18 +42,25 @@ class ScheduleReceiver : BroadcastReceiver() {
                 rearm(context)
 
                 // Start-on-boot: launch MainActivity so it can prompt for
-                // MediaProjection consent. Can't bypass the dialog — Android 10+
-                // forbids silent screen capture.
+                // MediaProjection consent. Two platform limits apply:
+                //  1. Android 10+ forbids silent screen capture, so the consent
+                //     dialog can't be bypassed.
+                //  2. Android 10+ also blocks background activity starts from a
+                //     receiver unless the app holds SYSTEM_ALERT_WINDOW ("Display
+                //     over other apps"). Without it this startActivity is silently
+                //     dropped — the dialog message tells the user how to enable it.
                 val prefs = context.getSharedPreferences("grabber_prefs", Context.MODE_PRIVATE)
                 if (prefs.getBoolean("startOnBoot", false)) {
                     val host = prefs.getString("host", "") ?: ""
                     if (host.isNotBlank()) {
-                        context.startActivity(
-                            Intent(context, MainActivity::class.java).apply {
-                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                putExtra(MainActivity.EXTRA_AUTO_START, true)
-                            }
-                        )
+                        runCatching {
+                            context.startActivity(
+                                Intent(context, MainActivity::class.java).apply {
+                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    putExtra(MainActivity.EXTRA_AUTO_START, true)
+                                }
+                            )
+                        }
                     }
                 }
             }

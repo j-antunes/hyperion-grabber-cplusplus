@@ -8,9 +8,18 @@ enum class GrabStatus   { STOPPED, CONNECTING, RUNNING, ERROR }
 enum class ReachStatus  { IDLE, CHECKING, OK, FAIL }
 
 class GrabberState {
+    private companion object {
+        const val KEEPALIVE_MS = 3000L  // resend last frame on a static screen
+        const val RECONNECT_MS = 5000L  // backoff between reconnect attempts
+    }
+
     private val prefs = Preferences.userNodeForPackage(GrabberState::class.java)
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var job: Job? = null
+
+    // The capture coroutine's client, so stop() can close the socket and break
+    // any blocked read/write (coroutine cancellation alone can't interrupt those).
+    @Volatile private var activeClient: HyperionClient? = null
 
     var host           by mutableStateOf(prefs.get("host", ""))
     var port           by mutableStateOf(prefs.get("port", "19400"))
@@ -52,7 +61,8 @@ class GrabberState {
     fun testLeds() {
         val h = normalizeHost()
         val p = port.toIntOrNull() ?: 19400
-        val pr = priority.coerceIn(1, 255)
+        // Hyperion rejects a Register outside the 100–199 grabber range.
+        val pr = priority.coerceIn(100, 199)
         if (h.isEmpty()) { reachStatus = ReachStatus.FAIL; return }
         scope.launch {
             reachStatus = ReachStatus.CHECKING
@@ -88,6 +98,12 @@ class GrabberState {
         return buf
     }
 
+    // Update the displayed value while dragging without spawning an HTTP POST
+    // per tick — the network call happens once on release (applyBrightness).
+    fun setBrightnessLocal(v: Int) {
+        brightness = v.coerceIn(0, 100)
+    }
+
     fun applyBrightness(v: Int) {
         brightness = v.coerceIn(0, 100)
         prefs.putInt("brightness", brightness)
@@ -118,7 +134,9 @@ class GrabberState {
         val h = normalizeHost()
         val p = port.toIntOrNull() ?: 19400
         val f = fps.toIntOrNull()?.coerceIn(1, 60) ?: 25
-        val pr = priority.coerceIn(1, 255)
+        // Hyperion reserves priorities outside 100–199 for internal sources and
+        // rejects a Register that uses them.
+        val pr = priority.coerceIn(100, 199)
         if (h.isEmpty()) { errorMsg = "Host is required"; return }
         prefs.put("host", host); prefs.put("port", port)
         prefs.put("fps", fps);   prefs.putInt("priority", pr)
@@ -129,6 +147,9 @@ class GrabberState {
 
     private fun stop() {
         job?.cancel(); job = null
+        // Close the socket so a coroutine blocked in a socket read/write wakes up
+        // immediately instead of lingering until the OS TCP timeout.
+        activeClient?.disconnect()
         grabStatus = GrabStatus.STOPPED
         fpsActual = 0
     }
@@ -139,45 +160,62 @@ class GrabberState {
 
     private suspend fun runGrabber(host: String, port: Int, priority: Int, targetFps: Int) {
         val client = HyperionClient(host, port, priority)
+        activeClient = client
         if (!client.connect()) {
             grabStatus = GrabStatus.ERROR
             errorMsg = "Could not connect to $host:$port"
+            activeClient = null
             return
         }
 
-        val (dstW, dstH) = HyperionJsonClient.queryResolution(host) ?: (216 to 36)
-        val grabber = ScreenGrabber(dstW, dstH)
         val frameMs = 1000L / targetFps
-
-        grabStatus = GrabStatus.RUNNING
         var frameCount = 0
         var lastStatsMs = monoMs()
-        var lastSentMs  = monoMs() - 5000L
+        var lastSentMs  = monoMs()
         var lastPixels: ByteArray? = null
         var nextFrameDueMs = monoMs()
 
+        // Held outside the try so finally can close it (releases the DXGI handle).
+        var grabber: ScreenGrabber? = null
+
         try {
+            val (dstW, dstH) = HyperionJsonClient.queryResolution(host) ?: (216 to 36)
+            // Robot()/GraphicsEnvironment throw on a headless or broken display —
+            // keep them inside the try so the catch reports it and releases the
+            // socket instead of wedging the UI at CONNECTING.
+            val g = ScreenGrabber(dstW, dstH)
+            grabber = g
+            grabStatus = GrabStatus.RUNNING
+
             while (true) {
                 currentCoroutineContext().ensureActive()
-                val rgb = grabber.captureRgb()
-                val ok  = client.sendFrame(rgb, dstW, dstH)
+                val rgb = g.captureRgb()
 
-                if (!ok) {
-                    client.disconnect()
-                    delay(5000)
-                    currentCoroutineContext().ensureActive()
-                    if (!client.connect()) break
-                    lastSentMs = monoMs()
-                    nextFrameDueMs = monoMs()
-                } else {
+                // Only transmit when the frame changed; resend the last frame
+                // every KEEPALIVE_MS on a static screen so Hyperion's priority
+                // doesn't expire. Mirrors the C++/Android behaviour.
+                val changed = lastPixels == null || !rgb.contentEquals(lastPixels)
+                val keepaliveDue = monoMs() - lastSentMs >= KEEPALIVE_MS
+                if (changed || keepaliveDue) {
+                    if (!client.sendFrame(rgb, dstW, dstH)) {
+                        // Retry the reconnect until it succeeds or we're stopped,
+                        // rather than giving up after one attempt.
+                        client.disconnect()
+                        grabStatus = GrabStatus.CONNECTING
+                        while (true) {
+                            currentCoroutineContext().ensureActive()
+                            delay(RECONNECT_MS)
+                            if (client.connect()) break
+                        }
+                        grabStatus = GrabStatus.RUNNING
+                        lastPixels = null
+                        lastSentMs = monoMs()
+                        nextFrameDueMs = monoMs()
+                        continue
+                    }
                     lastPixels = rgb
                     lastSentMs = monoMs()
-                    frameCount++
-                }
-
-                if (monoMs() - lastSentMs > 3000) {
-                    lastPixels?.let { client.sendFrame(it, dstW, dstH) }
-                    lastSentMs = monoMs()
+                    if (changed) frameCount++
                 }
 
                 val now = monoMs()
@@ -195,10 +233,18 @@ class GrabberState {
                 val sleepMs = nextFrameDueMs - monoMs()
                 if (sleepMs > 0) delay(sleepMs)
             }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            grabStatus = GrabStatus.ERROR
+            errorMsg = e.message ?: "Capture failed"
         } finally {
-            grabber.close()
+            grabber?.close()
             client.disconnect()
-            if (grabStatus == GrabStatus.RUNNING) { grabStatus = GrabStatus.STOPPED; fpsActual = 0 }
+            activeClient = null
+            if (grabStatus == GrabStatus.RUNNING || grabStatus == GrabStatus.CONNECTING) {
+                grabStatus = GrabStatus.STOPPED; fpsActual = 0
+            }
         }
     }
 

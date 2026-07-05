@@ -21,6 +21,10 @@ public:
     HyperionClient(const std::string& host, uint16_t port, int priority = 150);
     ~HyperionClient();
 
+    // Owns a raw socket fd; copying would double-close it.
+    HyperionClient(const HyperionClient&)            = delete;
+    HyperionClient& operator=(const HyperionClient&) = delete;
+
     bool connect();
     void disconnect();
     bool isConnected() const;

@@ -121,6 +121,10 @@ class MainFragment : Fragment() {
             liveStats.visibility = borderVisible
             if (running) {
                 lastFrameCount = 0L
+                // Status can emit RUNNING more than once (CONNECTING→RUNNING, each
+                // keepalive reconnect). Drop any existing chain first so stats
+                // runnables don't stack and divide the reported fps.
+                uiHandler.removeCallbacks(statsRunnable)
                 uiHandler.post(statsRunnable)
             } else {
                 uiHandler.removeCallbacks(statsRunnable)
@@ -154,6 +158,9 @@ class MainFragment : Fragment() {
         vm.serviceError.observe(viewLifecycleOwner) { err ->
             if (!err.isNullOrBlank()) {
                 android.widget.Toast.makeText(requireContext(), err, android.widget.Toast.LENGTH_LONG).show()
+                // Consume it so it doesn't replay on every view recreation
+                // (LiveData re-delivers its last value to new observers).
+                vm.clearServiceError()
             }
         }
 
@@ -192,7 +199,6 @@ class MainFragment : Fragment() {
     }
 
     private fun showEditDialog(key: SettingKey) {
-        if (key == SettingKey.PORT)          { showProtocolPicker();   return }
         if (key == SettingKey.BRIGHTNESS)    { showBrightnessSlider(); return }
         if (key == SettingKey.START_ON_BOOT) { showStartOnBootDialog(); return }
 
@@ -202,7 +208,11 @@ class MainFragment : Fragment() {
                 InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI,
                 vm.host.value ?: ""
             )
-            SettingKey.PORT -> EditMeta("", "", 0, "") // unreachable — handled above
+            SettingKey.PORT -> EditMeta(
+                getString(R.string.setting_port), "Flatbuffers port (default 19400)",
+                InputType.TYPE_CLASS_NUMBER,
+                (vm.port.value ?: 19400).toString()
+            )
             SettingKey.FPS -> EditMeta(
                 getString(R.string.setting_fps), "1–60",
                 InputType.TYPE_CLASS_NUMBER,
@@ -247,16 +257,10 @@ class MainFragment : Fragment() {
         })
     }
 
-    private val protocols = listOf(
-        "Flatbuffer"  to 19400,
-        "Proto"       to 19445,
-        "JSON (read)" to 19444,
-    )
-
-    private fun protocolLabel(port: Int): String {
-        val name = protocols.firstOrNull { it.second == port }?.first
-        return if (name != null) "$name · $port" else "Custom · $port"
-    }
+    // The service only implements the flatbuffers transport; the proto (19445)
+    // and JSON (19444) ports were pickable but never worked, so they're gone.
+    private fun protocolLabel(port: Int): String =
+        if (port == 19400) "Flatbuffer · $port" else "Custom · $port"
 
     private fun showBrightnessSlider() {
         val ctx = requireContext()
@@ -302,21 +306,6 @@ class MainFragment : Fragment() {
             .setView(layout)
             .setPositiveButton(R.string.edit_confirm) { _, _ ->
                 vm.saveBrightness(seekBar.progress)
-            }
-            .setNegativeButton(R.string.edit_cancel, null)
-            .show()
-    }
-
-    private fun showProtocolPicker() {
-        val currentPort = vm.port.value ?: 19400
-        val labels = protocols.map { (name, port) -> "$name  ($port)" }.toTypedArray()
-        val checked = protocols.indexOfFirst { it.second == currentPort }.coerceAtLeast(0)
-
-        AlertDialog.Builder(requireContext())
-            .setTitle(getString(R.string.setting_port))
-            .setSingleChoiceItems(labels, checked) { dialog, which ->
-                vm.savePort(protocols[which].second)
-                dialog.dismiss()
             }
             .setNegativeButton(R.string.edit_cancel, null)
             .show()

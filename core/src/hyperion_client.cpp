@@ -18,12 +18,13 @@
 #define MSG_NOSIGNAL    0
 #else
 #include <sys/socket.h>
-#include <sys/select.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <poll.h>
 #define CLOSE_SOCKET(s) ::close(s)
 #endif
 
@@ -77,6 +78,36 @@ static void setSocketTimeouts(int fd, int timeoutMs) {
 #endif
 }
 
+// An ambient-light stream at 25 fps benefits from every frame going out
+// immediately; Nagle would otherwise hold a frame's tail waiting for an ACK.
+static void setNoDelay(int fd) {
+    int one = 1;
+    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&one), sizeof(one));
+}
+
+// Wait until fd is readable (or writable) or the timeout elapses; retries EINTR.
+// Returns 1 if ready, 0 on timeout, <0 on error. POSIX uses poll() rather than
+// select() because the app-process fd can exceed FD_SETSIZE (1024), which makes
+// FD_SET undefined behaviour. Windows keeps select() (array-based fd_set, no cap).
+static int waitFd(int fd, bool forWrite, int timeoutMs) {
+#ifdef _WIN32
+    fd_set fds;
+    FD_ZERO(&fds);
+    FD_SET(fd, &fds);
+    timeval tv{ timeoutMs / 1000, (timeoutMs % 1000) * 1000 };
+    return ::select(0, forWrite ? nullptr : &fds, forWrite ? &fds : nullptr, nullptr, &tv);
+#else
+    struct pollfd pfd{};
+    pfd.fd     = fd;
+    pfd.events = static_cast<short>(forWrite ? POLLOUT : POLLIN);
+    for (;;) {
+        int r = ::poll(&pfd, 1, timeoutMs);
+        if (r < 0 && IS_EINTR(SOCK_ERRNO())) continue;
+        return r;
+    }
+#endif
+}
+
 int connectTcp(const std::string& host, uint16_t port, int timeoutMs) {
 #ifdef _WIN32
     static std::once_flag wsaOnce;
@@ -112,11 +143,7 @@ int connectTcp(const std::string& host, uint16_t port, int timeoutMs) {
         if (c == 0 || pending) {
             bool ok = true;
             if (pending) {
-                fd_set wfds;
-                FD_ZERO(&wfds);
-                FD_SET(fd, &wfds);
-                timeval tv{ timeoutMs / 1000, (timeoutMs % 1000) * 1000 };
-                int sel = ::select(fd + 1, nullptr, &wfds, nullptr, &tv);
+                int sel = waitFd(fd, /*forWrite=*/true, timeoutMs);
                 int soErr = -1;
                 socklen_t len = sizeof(soErr);
                 if (sel > 0)
@@ -125,6 +152,7 @@ int connectTcp(const std::string& host, uint16_t port, int timeoutMs) {
             }
             if (ok) {
                 setNonBlocking(fd, false);
+                setNoDelay(fd);
                 setSocketTimeouts(fd, timeoutMs);
                 break;
             }
@@ -142,6 +170,7 @@ int connectTcp(const std::string& host, uint16_t port, int timeoutMs) {
 static bool recvAll(int fd, uint8_t* buf, size_t len) {
     while (len > 0) {
         ssize_t n = ::recv(fd, reinterpret_cast<char*>(buf), static_cast<int>(len), 0);
+        if (n < 0 && IS_EINTR(SOCK_ERRNO())) continue; // a caught signal is not a fault
         if (n <= 0) return false;
         buf += n;
         len -= static_cast<size_t>(n);
@@ -152,6 +181,7 @@ static bool recvAll(int fd, uint8_t* buf, size_t len) {
 static bool sendAll(int fd, const uint8_t* data, size_t len) {
     while (len > 0) {
         ssize_t n = ::send(fd, reinterpret_cast<const char*>(data), static_cast<int>(len), MSG_NOSIGNAL);
+        if (n < 0 && IS_EINTR(SOCK_ERRNO())) continue; // a caught signal is not a fault
         if (n <= 0) {
             LOGE("send() failed: err=%d", SOCK_ERRNO());
             return false;
@@ -163,9 +193,15 @@ static bool sendAll(int fd, const uint8_t* data, size_t len) {
 }
 
 static bool sendFbb(int fd, flatbuffers::FlatBufferBuilder& fbb) {
-    uint32_t size = htonl(static_cast<uint32_t>(fbb.GetSize()));
-    return sendAll(fd, reinterpret_cast<uint8_t*>(&size), 4)
-        && sendAll(fd, fbb.GetBufferPointer(), fbb.GetSize());
+    // Coalesce the 4-byte big-endian size prefix and the body into one buffer so
+    // the whole message leaves in a single send() — two sends can split the frame
+    // across TCP segments and add latency even with Nagle disabled.
+    const uint32_t bodySize = static_cast<uint32_t>(fbb.GetSize());
+    const uint32_t sizeBe   = htonl(bodySize);
+    std::vector<uint8_t> msg(4 + bodySize);
+    memcpy(msg.data(),     &sizeBe, 4);
+    memcpy(msg.data() + 4, fbb.GetBufferPointer(), bodySize);
+    return sendAll(fd, msg.data(), msg.size());
 }
 
 // Non-blocking drain of any data Hyperion has sent us (replies to Image frames).
@@ -175,15 +211,9 @@ static bool sendFbb(int fd, flatbuffers::FlatBufferBuilder& fbb) {
 // kernel buffer, so the caller never notices and reconnect never fires.
 static bool drainReplies(int fd) {
     while (true) {
-        fd_set rfds;
-        FD_ZERO(&rfds);
-        FD_SET(fd, &rfds);
-        timeval tv{0, 0};
-        int sel = ::select(fd + 1, &rfds, nullptr, nullptr, &tv);
+        int sel = waitFd(fd, /*forWrite=*/false, 0); // poll with a zero timeout
         if (sel < 0) {
-            int e = SOCK_ERRNO();
-            if (IS_EINTR(e)) continue;
-            LOGE("drainReplies: select() failed: err=%d", e);
+            LOGE("drainReplies: poll() failed: err=%d", SOCK_ERRNO());
             return false;
         }
         if (sel == 0) return true; // no data pending
@@ -217,6 +247,14 @@ static bool readReply(int fd) {
     std::vector<uint8_t> buf(size);
     if (!recvAll(fd, buf.data(), size)) {
         LOGE("readReply: failed to read %u reply bytes", size);
+        return false;
+    }
+
+    // The size prefix bounds the buffer, but offsets inside an unverified
+    // flatbuffer can point anywhere — verify before touching any field.
+    flatbuffers::Verifier verifier(buf.data(), buf.size());
+    if (!hyperionnet::VerifyReplyBuffer(verifier)) {
+        LOGE("readReply: malformed reply buffer");
         return false;
     }
 
@@ -272,17 +310,15 @@ bool HyperionClient::sendFrame(const std::vector<Color>& pixels, int width, int 
         return false;
     }
 
-    std::vector<uint8_t> rgb(pixels.size() * 3);
-    for (size_t i = 0; i < pixels.size(); ++i) {
-        rgb[i*3+0] = pixels[i].r;
-        rgb[i*3+1] = pixels[i].g;
-        rgb[i*3+2] = pixels[i].b;
-    }
+    // Color is three tightly-packed bytes, so the pixel vector is already a
+    // contiguous RGB byte buffer — hand it straight to CreateVector, no copy.
+    static_assert(sizeof(Color) == 3, "Color must be packed RGB for zero-copy send");
 
-    flatbuffers::FlatBufferBuilder fbb(rgb.size() + 512);
+    flatbuffers::FlatBufferBuilder fbb(pixels.size() * 3 + 512);
 
     // Build RawImage (nested inside ImageType union inside Image)
-    auto data_vec = fbb.CreateVector(rgb);
+    auto data_vec = fbb.CreateVector(
+        reinterpret_cast<const uint8_t*>(pixels.data()), pixels.size() * 3);
     auto raw_img  = hyperionnet::CreateRawImage(fbb, data_vec, width, height);
 
     auto img = hyperionnet::CreateImage(

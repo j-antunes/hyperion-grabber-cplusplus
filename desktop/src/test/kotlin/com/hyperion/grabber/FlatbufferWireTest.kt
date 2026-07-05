@@ -86,7 +86,36 @@ class FlatbufferWireTest {
         val img = assertNotNull(fb.offsetField(req, 1))
         val raw = assertNotNull(fb.offsetField(img, 1))
         assertEquals(0, fb.byteVector(assertNotNull(fb.offsetField(raw, 0))).size)
-        // width/height 0 are schema defaults — the builder omits them
-        assertNull(fb.intField(raw, 1))
+        // The schema default is -1, so a real width/height of 0 must be written to
+        // the wire (not omitted as it would be if the default were 0).
+        assertEquals(0, fb.intField(raw, 1), "width 0 must be present, not omitted")
+        assertEquals(0, fb.intField(raw, 2), "height 0 must be present, not omitted")
+    }
+
+    @Test
+    fun `reply parser extracts a registration error string`() {
+        // Build a Reply { error:string } the way Hyperion would on a rejected
+        // registration, then confirm the client surfaces it.
+        val fbb = com.google.flatbuffers.FlatBufferBuilder(64)
+        val errOff = fbb.createString("Register rejected: priority not allowed")
+        fbb.startTable(3)          // Reply { error[0], video[1], registered[2] }
+        fbb.addOffset(0, errOff, 0)
+        val replyOff = fbb.endTable()
+        fbb.finish(replyOff)
+        assertEquals(
+            "Register rejected: priority not allowed",
+            client.parseReplyError(fbb.sizedByteArray())
+        )
+    }
+
+    @Test
+    fun `reply parser returns null when there is no error`() {
+        // Reply with only registered set — a successful registration.
+        val fbb = com.google.flatbuffers.FlatBufferBuilder(64)
+        fbb.startTable(3)
+        fbb.addInt(2, 150, -1)     // registered = priority
+        val replyOff = fbb.endTable()
+        fbb.finish(replyOff)
+        assertNull(client.parseReplyError(fbb.sizedByteArray()))
     }
 }

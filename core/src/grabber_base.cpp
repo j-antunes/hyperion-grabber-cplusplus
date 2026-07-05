@@ -46,7 +46,37 @@ void GrabberBase::runLoop() {
     auto nextFrameDue = clock::now();
 
     while (m_running) {
+        // Capture was torn down by a prior Lost result — re-establish it at the
+        // (possibly new) screen geometry before capturing again. Backing off
+        // keeps a persistent failure (e.g. no display) from spinning.
+        if (!m_initialized) {
+            for (int i = 0; i < REINIT_BACKOFF_MS / 100 && m_running; ++i)
+                std::this_thread::sleep_for(microsec(100'000));
+            if (!m_running) break;
+            if (initCapture()) {
+                m_initialized = true;
+                m_processor = std::make_unique<FrameProcessor>(m_config);
+                printf("[grabber] capture reinitialized\n");
+            } else {
+                printf("[grabber] capture reinit failed, will retry\n");
+            }
+            lastSent = clock::now();
+            nextFrameDue = clock::now();
+            continue;
+        }
+
         CaptureResult res = captureFrame(*m_processor);
+
+        if (res == CaptureResult::Lost) {
+            // Capture source invalidated (resolution change / DXGI ACCESS_LOST).
+            // Tear down capture and let the top of the loop rebuild it, leaving
+            // the still-healthy TCP connection alone.
+            printf("[grabber] capture lost, reinitializing…\n");
+            deinitCapture();
+            m_initialized = false;
+            continue;
+        }
+
         bool sendFailed = (res == CaptureResult::Failed);
 
         if (res == CaptureResult::Sent) {

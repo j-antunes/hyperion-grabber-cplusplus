@@ -50,6 +50,13 @@ public:
 
     ~FakeHyperionServer() {
         m_stop = true;
+        // Unblock the worker whether it's parked in accept() or recv():
+        // shutdown() wakes a blocked socket call immediately, whereas close()
+        // alone does not reliably do so on Linux. Without this, teardown only
+        // worked by accident of the client being destroyed first.
+        if (m_listen >= 0) ::shutdown(m_listen, SHUT_RDWR);
+        int c = m_client.exchange(-1);
+        if (c >= 0) ::shutdown(c, SHUT_RDWR);
         if (m_thread.joinable()) m_thread.join();
         if (m_listen >= 0) ::close(m_listen);
     }
@@ -63,6 +70,11 @@ public:
         m_thread = std::thread([this, framesBeforeClose] {
             int client = ::accept(m_listen, nullptr, nullptr);
             if (client < 0) return;
+            m_client = client;
+            // A recv timeout guarantees the worker periodically re-checks m_stop
+            // even if the dtor's shutdown() races the accept()→recv() window.
+            timeval tv{2, 0};
+            ::setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
             // 1. Read Register (size-prefixed flatbuffer).
             if (!readSizedFrame(client)) { ::close(client); return; }
@@ -108,6 +120,7 @@ private:
     uint16_t          m_port   = 0;
     std::thread       m_thread;
     std::atomic<bool> m_stop{false};
+    std::atomic<int>  m_client{-1};
 };
 
 std::vector<hyperion::Color> makeRedFrame(int w, int h) {

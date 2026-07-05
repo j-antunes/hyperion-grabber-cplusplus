@@ -1,9 +1,13 @@
 package com.hyperion.grabber
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.viewModels
+import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Observer
 
@@ -14,6 +18,7 @@ class MainActivity : FragmentActivity() {
 
     companion object {
         private const val REQ_MEDIA_PROJECTION = 100
+        private const val REQ_POST_NOTIFICATIONS = 101
         const val EXTRA_AUTO_START = "auto_start"
     }
 
@@ -21,15 +26,19 @@ class MainActivity : FragmentActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         projManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        maybeRequestNotificationPermission()
 
         if (savedInstanceState == null) {
             supportFragmentManager.beginTransaction()
                 .replace(R.id.fragment_container, MainFragment())
                 .commit()
-        }
 
-        if (intent?.getBooleanExtra(EXTRA_AUTO_START, false) == true) {
-            requestProjection()
+            // Only on a fresh launch — the auto-start extra survives recreation,
+            // so without this guard a config change would silently re-request
+            // projection (and resume a grabber the user had paused).
+            if (intent?.getBooleanExtra(EXTRA_AUTO_START, false) == true) {
+                requestProjection()
+            }
         }
     }
 
@@ -40,6 +49,17 @@ class MainActivity : FragmentActivity() {
         setIntent(intent)
         if (intent.getBooleanExtra(EXTRA_AUTO_START, false)) {
             requestProjection()
+        }
+    }
+
+    // On Android 13+ the FGS notification (and its pause-state updates) is hidden
+    // unless the user grants POST_NOTIFICATIONS at runtime.
+    private fun maybeRequestNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_POST_NOTIFICATIONS)
         }
     }
 

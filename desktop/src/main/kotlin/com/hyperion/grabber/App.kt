@@ -131,7 +131,7 @@ private fun SettingsCard(state: GrabberState) {
                 )
                 OutlinedTextField(
                     value = state.priority.toString(),
-                    onValueChange = { state.priority = it.toIntOrNull()?.coerceIn(1, 255) ?: state.priority },
+                    onValueChange = { state.priority = it.toIntOrNull()?.coerceIn(100, 199) ?: state.priority },
                     label = { Text("Priority") },
                     placeholder = { Text("150", color = Grey) },
                     modifier = Modifier.weight(1f),
@@ -141,7 +141,7 @@ private fun SettingsCard(state: GrabberState) {
                 )
             }
             Text(
-                "Port: Hyperion flatbuffers port (default 19400)  ·  Priority: lower = higher priority (1–255)",
+                "Port: Hyperion flatbuffers port (default 19400)  ·  Priority: grabber range 100–199 (lower = higher)",
                 color = Grey,
                 fontSize = 11.sp
             )
@@ -154,7 +154,8 @@ private fun SettingsCard(state: GrabberState) {
                 }
                 Slider(
                     value = state.brightness.toFloat(),
-                    onValueChange = { state.applyBrightness(it.toInt()) },
+                    onValueChange = { state.setBrightnessLocal(it.toInt()) },
+                    onValueChangeFinished = { state.applyBrightness(state.brightness) },
                     valueRange = 0f..100f,
                     modifier = Modifier.fillMaxWidth(),
                     colors = SliderDefaults.colors(

@@ -6,6 +6,13 @@
 
 namespace hyperion {
 
+// Xlib's default error handler calls exit() on a protocol error such as the
+// BadMatch that XGetImage raises when the cached size no longer matches the root
+// window (e.g. after an xrandr resolution change). Swallow it and record the
+// error so captureFrame can recover by re-initialising at the new resolution.
+static bool g_xError = false;
+static int  xErrorHandler(Display*, XErrorEvent*) { g_xError = true; return 0; }
+
 X11Grabber::X11Grabber(const FrameConfig& config, std::shared_ptr<HyperionClient> client)
     : GrabberBase(config, std::move(client)) {}
 
@@ -14,6 +21,7 @@ X11Grabber::~X11Grabber() {
 }
 
 bool X11Grabber::initCapture() {
+    XSetErrorHandler(xErrorHandler);
     m_display = XOpenDisplay(nullptr);
     if (!m_display) return false;
     m_screen = DefaultScreen(m_display);
@@ -34,10 +42,17 @@ void X11Grabber::deinitCapture() {
 }
 
 CaptureResult X11Grabber::captureFrame(FrameProcessor& processor) {
+    g_xError = false;
     XImage* img = XGetImage(m_display, m_root, 0, 0,
                             m_config.sourceWidth, m_config.sourceHeight,
                             AllPlanes, ZPixmap);
-    if (!img) return CaptureResult::Failed;
+    if (!img || g_xError) {
+        // Almost always a resolution change made the cached size invalid.
+        // Re-initialise capture (reopens the display and re-queries the size)
+        // rather than tearing down the healthy TCP connection.
+        if (img) XDestroyImage(img);
+        return CaptureResult::Lost;
+    }
 
     std::vector<Color> pixels;
     if (img->bits_per_pixel == 32) {

@@ -31,12 +31,17 @@ public:
     const FrameConfig& config() const { return m_config; }
     const std::vector<Color>& lastPixels() const { return m_buffer; }
 
-    // Exposed for unit tests
-    static CropRect detectBlackBars(const uint8_t* rgba, int rowStride,
+    // Exposed for unit tests. `bgra` selects the channel order of the input so
+    // luminance is weighted correctly for both RGBA and BGRA captures.
+    static CropRect detectBlackBars(const uint8_t* pix, int rowStride,
                                     int srcW, int srcH,
-                                    int luminanceThreshold = 16);
+                                    int luminanceThreshold = 16,
+                                    bool bgra = false);
 
 private:
+    // Shared crop + downscale for processRGBA/processBGRA (bgra swaps R/B).
+    std::vector<Color> process4(const uint8_t* data, int rowStride, bool bgra);
+
     FrameConfig m_config;
     std::vector<Color> m_buffer;
 

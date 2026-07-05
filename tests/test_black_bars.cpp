@@ -59,6 +59,25 @@ TEST(BlackBarDetection, NeverCropsMoreThan25Percent) {
     EXPECT_GE(crop.h, 540 / 2); // must keep at least half the frame
 }
 
+TEST(BlackBarDetection, DarkRedIsContentOnBgra) {
+    // Dark red (R=100, G=B=0) is real content, not a black bar. On a BGRA capture
+    // the red byte lands at p[2]; scoring it with RGB-order weights would treat
+    // the whole frame as black and crop 25% off every edge.
+    const int w = 960, h = 540;
+    std::vector<uint8_t> frame(w * h * 4, 0);
+    for (int i = 0; i < w * h; ++i) {
+        frame[i * 4 + 0] = 0;    // B
+        frame[i * 4 + 1] = 0;    // G
+        frame[i * 4 + 2] = 100;  // R
+        frame[i * 4 + 3] = 255;  // A
+    }
+    auto crop = FrameProcessor::detectBlackBars(frame.data(), w * 4, w, h, 16, /*bgra=*/true);
+    EXPECT_EQ(crop.x, 0);
+    EXPECT_EQ(crop.y, 0);
+    EXPECT_EQ(crop.w, w);
+    EXPECT_EQ(crop.h, h);
+}
+
 TEST(BlackBarDetection, AllBlack) {
     std::vector<uint8_t> black(960 * 540 * 4, 0);
     auto crop = FrameProcessor::detectBlackBars(black.data(), 960 * 4, 960, 540);

@@ -37,9 +37,9 @@ pc/
   windows/dxgi_grabber.cpp  DXGI screen grabber
   main.cpp
 android/
-  CMakeLists.txt
   app/
     build.gradle            minSdk 26, compileSdk 35, NDK 27, abiFilters arm64+armv7+x86_64+x86
+                            externalNativeBuild points at the root CMakeLists.txt
     src/main/
       cpp/jni_bridge.cpp    JNI entry points called from Kotlin
       java/com/hyperion/grabber/
@@ -48,8 +48,8 @@ android/
         GrabberViewModel.kt     LiveData state, schedule, testLeds()
         ScreenGrabberService.kt Foreground service (FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
         HyperionNative.kt       `external fun` declarations for JNI
-        HyperionJsonClient.kt   JSON API helper (computeRecommendedResolution)
-        HyperionProtoClient.kt  Protobuf client (port 19445, unused by default)
+        HyperionJsonClient.kt   JSON API helper (computeRecommendedResolution, setBrightness over port 19444)
+        CaptureStateController.kt Pure pause/resume state machine (unit-tested)
         SunsetCalculator.kt     computeSunsetHour() — pure function, unit-tested
         ScheduleMode.kt         enum OFF / FIXED / SUNSET
         ScheduleManager.kt      AlarmManager wrapper

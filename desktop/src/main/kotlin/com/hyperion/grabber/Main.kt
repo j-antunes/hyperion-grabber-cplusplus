@@ -36,8 +36,11 @@ fun main() {
 
     application {
         Window(
+            // On desktops with no system tray (e.g. stock GNOME) installTray()
+            // is a no-op, so hiding to the tray would make the app unreachable.
+            // Only minimize to tray when one actually exists.
             onCloseRequest = {
-                if (state.minimizeToTray) windowVisible.value = false
+                if (state.minimizeToTray && SystemTray.isSupported()) windowVisible.value = false
                 else { state.shutdown(); exitApplication() }
             },
             visible = windowVisible.value,

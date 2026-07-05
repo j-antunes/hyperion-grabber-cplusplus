@@ -8,9 +8,15 @@
 
 namespace hyperion {
 
-// Outcome of one capture attempt. NoFrame (e.g. DXGI timeout on a static
-// screen) must not reset the keepalive timer — nothing was transmitted.
-enum class CaptureResult { Sent, NoFrame, Failed };
+// Outcome of one capture attempt:
+//  Sent    — a frame was transmitted.
+//  NoFrame — nothing to send (DXGI timeout / pointer-only frame on a static
+//            screen); must not reset the keepalive timer.
+//  Failed  — the TCP send failed; the base reconnects the socket.
+//  Lost    — the capture source was invalidated (resolution change, DXGI
+//            ACCESS_LOST, mode switch, screen lock); the base re-initialises
+//            capture and leaves the healthy TCP connection alone.
+enum class CaptureResult { Sent, NoFrame, Failed, Lost };
 
 // Platform-specific grabbers inherit from this.
 // IMPORTANT: every derived destructor must call stop() — the base destructor
@@ -45,8 +51,9 @@ private:
     std::unique_ptr<FrameProcessor> m_processor;
     bool                         m_initialized = false;
 
-    static constexpr int KEEPALIVE_SECS  = 3;
-    static constexpr int RECONNECT_SECS  = 5;
+    static constexpr int KEEPALIVE_SECS   = 3;
+    static constexpr int RECONNECT_SECS   = 5;
+    static constexpr int REINIT_BACKOFF_MS = 500;  // wait before re-init after capture loss
 };
 
 } // namespace hyperion

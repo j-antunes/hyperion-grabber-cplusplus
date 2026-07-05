@@ -11,6 +11,10 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+// Hyperion brightness adjustment is a 0–100 percentage. Extracted so it can be
+// unit-tested against the same clamp the UI uses.
+internal fun clampBrightness(v: Int): Int = v.coerceIn(0, 100)
+
 sealed class ConnectionState {
     object Idle        : ConnectionState()
     object Checking    : ConnectionState()
@@ -108,12 +112,22 @@ class GrabberViewModel(app: Application) : AndroidViewModel(app) {
         prefs.edit().putBoolean("startOnBoot", v).apply()
     }
 
+    // Consume the one-shot service error after the UI has shown it, so it
+    // doesn't re-deliver to a newly recreated observer.
+    fun clearServiceError() {
+        ScreenGrabberService.lastError.value = null
+    }
+
     fun saveBrightness(v: Int) {
-        val clamped = v.coerceIn(0, 100)
+        val clamped = clampBrightness(v)
         brightness.value = clamped
         prefs.edit().putInt("brightness", clamped).apply()
         viewModelScope.launch {
-            HyperionJsonClient.setBrightness(host.value ?: return@launch, clamped)
+            val h = host.value
+            if (h.isNullOrBlank()) return@launch
+            HyperionJsonClient.setBrightness(h, clamped).onFailure {
+                ScreenGrabberService.lastError.postValue("Brightness change failed: ${it.message}")
+            }
         }
     }
 

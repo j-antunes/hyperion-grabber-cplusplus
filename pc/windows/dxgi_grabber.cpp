@@ -63,16 +63,29 @@ CaptureResult DXGIGrabber::captureFrame(FrameProcessor& processor) {
 
     HRESULT hr = m_duplication->AcquireNextFrame(100, &frameInfo, &resource);
     if (hr == DXGI_ERROR_WAIT_TIMEOUT) return CaptureResult::NoFrame;  // static screen
-    if (FAILED(hr)) return CaptureResult::Failed;
+    // ACCESS_LOST (and any other acquire failure) means the duplication interface
+    // is gone — resolution change, fullscreen switch, UAC prompt, Win+L. Signal a
+    // capture loss so the base recreates the interface; the TCP link stays up.
+    if (FAILED(hr)) return CaptureResult::Lost;
+
+    // A frame with LastPresentTime == 0 carries only mouse-pointer metadata; the
+    // desktop image is unchanged, so there is nothing new to send.
+    if (frameInfo.LastPresentTime.QuadPart == 0) {
+        m_duplication->ReleaseFrame();
+        return CaptureResult::NoFrame;
+    }
 
     Microsoft::WRL::ComPtr<ID3D11Texture2D> tex;
-    resource.As(&tex);
+    if (FAILED(resource.As(&tex))) {
+        m_duplication->ReleaseFrame();
+        return CaptureResult::Lost;
+    }
     m_context->CopyResource(m_stagingTex.Get(), tex.Get());
     m_duplication->ReleaseFrame();
 
     D3D11_MAPPED_SUBRESOURCE mapped{};
     if (FAILED(m_context->Map(m_stagingTex.Get(), 0, D3D11_MAP_READ, 0, &mapped)))
-        return CaptureResult::Failed;
+        return CaptureResult::Lost;
 
     auto pixels = processor.processBGRA(
         reinterpret_cast<const uint8_t*>(mapped.pData),
