@@ -35,6 +35,13 @@ void GrabberBase::stop() {
     }
 }
 
+// Sleep in 100ms slices so stop() is honoured promptly.
+void GrabberBase::sleepWhileRunning(int ms) {
+    using std::chrono::milliseconds;
+    for (int slept = 0; slept < ms && m_running; slept += 100)
+        std::this_thread::sleep_for(milliseconds(std::min(100, ms - slept)));
+}
+
 void GrabberBase::runLoop() {
     using clock    = std::chrono::steady_clock;
     using seconds  = std::chrono::seconds;
@@ -44,19 +51,45 @@ void GrabberBase::runLoop() {
     const auto frameInterval = microsec(1'000'000 / fps);
     auto lastSent = clock::now();
     auto nextFrameDue = clock::now();
+    bool pausedForDisplay = false;
 
     while (m_running) {
+        // ── Display power ────────────────────────────────────────────────
+        // Checked first: while the panel is dark there is nothing worth
+        // capturing, and on Windows the duplication can't be rebuilt anyway.
+        if (!isDisplayOn()) {
+            if (!pausedForDisplay) {
+                printf("[grabber] display off — pausing capture and dropping connection\n");
+                pausedForDisplay = true;
+                m_client->disconnect();
+            }
+            sleepWhileRunning(DISPLAY_OFF_POLL_MS);
+            continue;
+        }
+        if (pausedForDisplay) {
+            if (!m_client->connect()) {
+                printf("[grabber] display on but reconnect failed, retrying in %ds\n", RECONNECT_SECS);
+                sleepWhileRunning(RECONNECT_SECS * 1000);
+                continue;
+            }
+            printf("[grabber] display on — resumed\n");
+            pausedForDisplay = false;
+            lastSent = clock::now();
+            nextFrameDue = clock::now();
+        }
+
+        // ── Capture re-init ──────────────────────────────────────────────
         // Capture was torn down by a prior Lost result — re-establish it at the
         // (possibly new) screen geometry before capturing again. Backing off
-        // keeps a persistent failure (e.g. no display) from spinning.
+        // keeps a persistent failure (e.g. secure desktop) from spinning.
         if (!m_initialized) {
-            for (int i = 0; i < REINIT_BACKOFF_MS / 100 && m_running; ++i)
-                std::this_thread::sleep_for(microsec(100'000));
+            sleepWhileRunning(REINIT_BACKOFF_MS);
             if (!m_running) break;
             if (initCapture()) {
                 m_initialized = true;
                 m_processor = std::make_unique<FrameProcessor>(m_config);
-                printf("[grabber] capture reinitialized\n");
+                printf("[grabber] capture reinitialized (%dx%d)\n",
+                       m_config.sourceWidth, m_config.sourceHeight);
             } else {
                 printf("[grabber] capture reinit failed, will retry\n");
             }
@@ -96,8 +129,7 @@ void GrabberBase::runLoop() {
         if (sendFailed) {
             printf("[grabber] send failed, reconnecting in %ds…\n", RECONNECT_SECS);
             m_client->disconnect();
-            for (int i = 0; i < RECONNECT_SECS * 10 && m_running; ++i)
-                std::this_thread::sleep_for(microsec(100'000));
+            sleepWhileRunning(RECONNECT_SECS * 1000);
             if (m_running) {
                 if (m_client->connect())
                     printf("[grabber] reconnected\n");

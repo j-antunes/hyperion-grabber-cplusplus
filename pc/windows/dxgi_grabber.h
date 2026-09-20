@@ -11,9 +11,8 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include "grabber_base.h"
-#include <d3d11.h>
-#include <dxgi1_2.h>
-#include <wrl/client.h>
+#include "dxgi_duplicator.h"
+#include "display_power.h"
 
 namespace hyperion {
 
@@ -26,12 +25,13 @@ protected:
     bool initCapture() override;
     void deinitCapture() override;
     CaptureResult captureFrame(FrameProcessor& processor) override;
+    bool isDisplayOn() override;
 
 private:
-    Microsoft::WRL::ComPtr<ID3D11Device>           m_device;
-    Microsoft::WRL::ComPtr<ID3D11DeviceContext>    m_context;
-    Microsoft::WRL::ComPtr<IDXGIOutputDuplication> m_duplication;
-    Microsoft::WRL::ComPtr<ID3D11Texture2D>        m_stagingTex;
+    win::DxgiDuplicator       m_dup;
+    // Lives for the grabber's whole lifetime (not per init/deinit cycle) so a
+    // capture re-init on the secure desktop doesn't churn a window thread.
+    win::DisplayPowerMonitor  m_power;
 };
 
 } // namespace hyperion

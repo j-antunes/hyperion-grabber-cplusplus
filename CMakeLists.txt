@@ -69,7 +69,8 @@ if(NOT ANDROID)
             pc/main.cpp
         )
         target_include_directories(hyperion_grabber_linux PRIVATE pc/linux)
-        target_link_libraries(hyperion_grabber_linux PRIVATE hyperion_core X11::X11)
+        # Xext provides DPMS (display power state) for the pause-on-screen-off path
+        target_link_libraries(hyperion_grabber_linux PRIVATE hyperion_core X11::X11 X11::Xext)
     endif()
 
     if(WIN32)
@@ -78,7 +79,7 @@ if(NOT ANDROID)
             pc/main.cpp
         )
         target_include_directories(hyperion_grabber_windows PRIVATE pc/windows)
-        target_link_libraries(hyperion_grabber_windows PRIVATE hyperion_core d3d11 dxgi)
+        target_link_libraries(hyperion_grabber_windows PRIVATE hyperion_core d3d11 dxgi user32)
     endif()
 endif()
 

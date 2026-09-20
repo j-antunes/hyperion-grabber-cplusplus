@@ -2,16 +2,28 @@
 
 #include "x11_grabber.h"
 #include <X11/Xutil.h>
+#include <X11/extensions/dpms.h>
+#include <atomic>
 #include <cstdio>
 
 namespace hyperion {
 
+namespace {
+
 // Xlib's default error handler calls exit() on a protocol error such as the
-// BadMatch that XGetImage raises when the cached size no longer matches the root
-// window (e.g. after an xrandr resolution change). Swallow it and record the
-// error so captureFrame can recover by re-initialising at the new resolution.
-static bool g_xError = false;
-static int  xErrorHandler(Display*, XErrorEvent*) { g_xError = true; return 0; }
+// BadMatch that XGetImage raises when the cached size no longer matches the
+// root window (e.g. after an xrandr resolution change). Swallow it and record
+// the error so captureFrame can recover by re-initialising at the new size.
+std::atomic<bool> g_xError{false};
+
+int nonFatalXErrorHandler(Display*, XErrorEvent* ev) {
+    g_xError = true;
+    fprintf(stderr, "[x11] X error %d (request %d) — reinitialising capture\n",
+            ev->error_code, ev->request_code);
+    return 0;
+}
+
+} // namespace
 
 X11Grabber::X11Grabber(const FrameConfig& config, std::shared_ptr<HyperionClient> client)
     : GrabberBase(config, std::move(client)) {}
@@ -21,16 +33,18 @@ X11Grabber::~X11Grabber() {
 }
 
 bool X11Grabber::initCapture() {
-    XSetErrorHandler(xErrorHandler);
+    XSetErrorHandler(nonFatalXErrorHandler);
     m_display = XOpenDisplay(nullptr);
     if (!m_display) return false;
     m_screen = DefaultScreen(m_display);
     m_root   = RootWindow(m_display, m_screen);
 
+    int ev = 0, err = 0;
+    m_hasDpms = DPMSQueryExtension(m_display, &ev, &err) && DPMSCapable(m_display);
+
     // Capture whatever the screen actually is — a hardcoded size makes
     // XGetImage fail (BadMatch) on smaller screens.
-    m_config.sourceWidth  = DisplayWidth(m_display, m_screen);
-    m_config.sourceHeight = DisplayHeight(m_display, m_screen);
+    readScreenSize();
     return true;
 }
 
@@ -41,7 +55,42 @@ void X11Grabber::deinitCapture() {
     }
 }
 
+// Query the root window geometry with a round trip: DisplayWidth/Height only
+// reflect the values cached when the connection was opened, so they miss a
+// RandR mode change made while we're running.
+bool X11Grabber::readScreenSize() {
+    Window rootRet; int x, y; unsigned w = 0, h = 0, border, depth;
+    if (!XGetGeometry(m_display, m_root, &rootRet, &x, &y, &w, &h, &border, &depth) || w == 0 || h == 0) {
+        w = static_cast<unsigned>(DisplayWidth(m_display, m_screen));
+        h = static_cast<unsigned>(DisplayHeight(m_display, m_screen));
+    }
+    m_lastSizeCheck = std::chrono::steady_clock::now();
+    bool changed = static_cast<int>(w) != m_config.sourceWidth ||
+                   static_cast<int>(h) != m_config.sourceHeight;
+    m_config.sourceWidth  = static_cast<int>(w);
+    m_config.sourceHeight = static_cast<int>(h);
+    return changed;
+}
+
+// X11 DPMS: Standby/Suspend/Off all mean the panel is dark. Mirrors the
+// Android SCREEN_OFF pause and Windows GUID_CONSOLE_DISPLAY_STATE.
+bool X11Grabber::isDisplayOn() {
+    if (!m_hasDpms || !m_display) return true;
+    CARD16 level = DPMSModeOn;
+    BOOL   enabled = False;
+    if (!DPMSInfo(m_display, &level, &enabled)) return true;
+    if (!enabled) return true;
+    return level == DPMSModeOn;
+}
+
 CaptureResult X11Grabber::captureFrame(FrameProcessor& processor) {
+    // A resolution *increase* keeps XGetImage happy (we'd silently capture
+    // just the top-left corner), so poll the geometry periodically as well.
+    if (std::chrono::steady_clock::now() - m_lastSizeCheck >
+        std::chrono::milliseconds(SIZE_CHECK_MS)) {
+        if (readScreenSize()) return CaptureResult::Lost;
+    }
+
     g_xError = false;
     XImage* img = XGetImage(m_display, m_root, 0, 0,
                             m_config.sourceWidth, m_config.sourceHeight,

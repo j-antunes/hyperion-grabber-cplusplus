@@ -6,12 +6,13 @@ Android TV screen grabber that sends frames to a [Hyperion.ng](https://github.co
 
 Android (Kotlin + JNI C++), the desktop JVM app, and the C++ PC grabbers (Linux X11, Windows DXGI) are first-class targets — when adding or changing a behavior, port it to all of them (and update the C++ tests / Kotlin tests that cover it) instead of leaving platform drift behind. Examples of behaviors that must stay aligned:
 
-- Pause/resume on screen power-off (Android: `SCREEN_OFF`/`SCREEN_ON`; Linux: X11 DPMS; Windows: `WM_POWERBROADCAST` / `GUID_CONSOLE_DISPLAY_STATE`).
-- Reconnect strategy on a dropped TCP socket.
+- Pause/resume on screen power-off (Android: `SCREEN_OFF`/`SCREEN_ON`; Linux C++: X11 DPMS via `X11Grabber::isDisplayOn`; Windows: `GUID_CONSOLE_DISPLAY_STATE` via the shared `pc/windows/display_power.h`, used by both the C++ grabber and the desktop JNI helper). While the display is off, capture stops **and the TCP connection is dropped** so Hyperion frees the priority; it reconnects when the display returns. Deliberate gap: the desktop JVM app on Linux/macOS (Robot path) has no DPMS access and always reports "on".
+- Reconnect strategy on a dropped TCP socket: disconnect, wait 5 s, retry **forever** until connected or stopped. Never give up after one failed attempt (Android keepalive, `GrabberBase::runLoop`, desktop `GrabberState.runGrabber`).
+- Capture-source loss is not a network failure. When the screen capture itself goes away (Windows `DXGI_ERROR_ACCESS_LOST` on lock screen / UAC / display sleep / mode change; X11 `BadMatch` or geometry change after a resolution switch) the grabber reports `CaptureResult::Lost` — the base loop tears capture down, re-inits it with a 500 ms backoff (DXGI re-creation *fails* while the secure desktop is up, so it keeps retrying) and rebuilds the `FrameProcessor` at the corrected source size, leaving TCP alone. The desktop JNI helper does the same with a 1 s backoff in `nativeCapture`.
 - The `drainReplies()` contract in `HyperionClient` — any new transport-layer fix must work on both POSIX and Winsock paths.
 - Frame pacing: monotonic clock + absolute next-frame deadline (Android `ScreenGrabberService`, desktop `GrabberState.runGrabber`, C++ `GrabberBase::runLoop`). Wall-clock pacing or anchoring the sleep to the iteration start reintroduces below-target frame rates.
 - "Test LEDs" button: flash solid red/green/blue/black frames so the user gets visible confirmation (Android `HyperionNative.testConnection`, desktop `GrabberState.testLeds`). A silent reachability ping is not a substitute.
-- Windows screen capture must use DXGI Desktop Duplication, not GDI/`java.awt.Robot`: Robot's BitBlt makes the hardware mouse cursor flicker during continuous capture. C++ uses `pc/windows/dxgi_grabber.cpp`; the desktop JVM app uses the JNI helper `desktop/native/dxgi_jni.cpp` (falling back to Robot on Linux/macOS, which don't have this issue).
+- Windows screen capture must use DXGI Desktop Duplication, not GDI/`java.awt.Robot`: Robot's BitBlt makes the hardware mouse cursor flicker during continuous capture. Both Windows paths share the header-only `pc/windows/dxgi_duplicator.h` (C++: `pc/windows/dxgi_grabber.cpp`; desktop JVM: JNI helper `desktop/native/dxgi_jni.cpp`, falling back to Robot on Linux/macOS, which don't have this issue). The duplicator picks the **primary** output across all adapters (not output 0 of the default adapter — wrong on multi-GPU laptops), requests BGRA8 via `IDXGIOutput5::DuplicateOutput1` so HDR desktops don't come back as FP16 (a format mismatch makes `CopyResource` a silent no-op → black LEDs), and rotates portrait outputs into desktop orientation. Put DXGI fixes in that header, not in one caller.
 
 If a feature genuinely doesn't apply to a platform (e.g. an Android-only schedule UI), call that out in the commit message or a code comment so it's a deliberate skip, not an oversight.
 
@@ -33,8 +34,11 @@ flatbuffers/
   hyperion_request.fbs      Matches Hyperion.ng 2.2.1 exactly — order of union values matters
   hyperion_reply.fbs
 pc/
-  linux/x11_grabber.cpp     X11 screen grabber
-  windows/dxgi_grabber.cpp  DXGI screen grabber
+  linux/x11_grabber.cpp     X11 screen grabber (DPMS pause, non-fatal X error handler, RandR size re-read)
+  windows/dxgi_duplicator.h Header-only DXGI Desktop Duplication (primary output, HDR-safe, rotation,
+                            ACCESS_LOST recovery) — shared with desktop/native/dxgi_jni.cpp
+  windows/display_power.h   Header-only GUID_CONSOLE_DISPLAY_STATE monitor — shared with the JNI helper
+  windows/dxgi_grabber.cpp  DXGI screen grabber (thin wrapper over the two headers)
   main.cpp
 android/
   app/
@@ -64,8 +68,8 @@ desktop/
   build.gradle.kts          Compose Desktop (Kotlin JVM, toolchain 21) — packages MSI/deb/dmg
   settings.gradle.kts       foojay resolver auto-provisions the JDK 21 toolchain
   native/
-    dxgi_jni.cpp            Windows DXGI Desktop Duplication capture, exposed via JNI
-    CMakeLists.txt          Standalone build (JNI + d3d11/dxgi); CI bundles the DLL
+    dxgi_jni.cpp            JNI wrapper over pc/windows/dxgi_duplicator.h + display_power.h
+    CMakeLists.txt          Standalone build (JNI + d3d11/dxgi/user32, includes ../../pc/windows); CI bundles the DLL
   src/main/kotlin/com/hyperion/grabber/
     Main.kt                 Entry point + tray icon (Swing JPopupMenu, native L&F)
     App.kt                  Compose UI
@@ -81,6 +85,8 @@ tests/
   test_flatbuffers.cpp      Regression: Command union values must match Hyperion.ng 2.2.1
   test_frame_processor.cpp
   test_hyperion_client.cpp
+  test_grabber_base.cpp   Run-loop contract: Lost re-inits capture + processor without reconnecting;
+                          display-off drops TCP and display-on reconnects
   test_black_bars.cpp
 .github/workflows/
   build.yml                 CI: C++ builds+ctest, Android tests+APK, desktop tests+MSI/deb;

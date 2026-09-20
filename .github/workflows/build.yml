@@ -25,7 +25,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install dependencies
-        run: sudo apt-get install -y libx11-dev
+        run: sudo apt-get install -y libx11-dev libxext-dev
       - name: Configure
         run: cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
       - name: Build

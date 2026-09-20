@@ -1,8 +1,8 @@
 // Windows Desktop Duplication (DXGI) screen capture exposed to the JVM desktop
-// app via JNI. This mirrors pc/windows/dxgi_grabber.cpp but is self-contained
-// (no core/ or flatbuffers dependency) and returns a downscaled RGB frame
-// instead of driving the network loop — the Kotlin GrabberState owns pacing,
-// sending and reconnect.
+// app via JNI. The capture itself lives in the shared header
+// pc/windows/dxgi_duplicator.h (same code as the C++ PC grabber); this file
+// only adds the downscale and the JNI plumbing. The Kotlin GrabberState owns
+// pacing, sending, keepalive and reconnect.
 //
 // Why this exists: java.awt.Robot captures via GDI BitBlt, which makes the
 // Windows hardware mouse cursor flicker during continuous capture. Desktop
@@ -11,70 +11,27 @@
 
 #ifdef _WIN32
 
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
+#include "dxgi_duplicator.h"
+#include "display_power.h"
 
-#include <windows.h>
-#include <d3d11.h>
-#include <dxgi1_2.h>
-#include <wrl/client.h>
 #include <jni.h>
 #include <cstdint>
 #include <vector>
 
-using Microsoft::WRL::ComPtr;
-
 namespace {
 
+// How long to wait before retrying duplication after it was lost. Re-creation
+// fails for as long as the secure desktop (lock screen / UAC) is up, so we
+// must keep trying rather than give up after the first failure.
+constexpr ULONGLONG RECREATE_RETRY_MS = 1000;
+
 struct Capturer {
-    ComPtr<ID3D11Device>           device;
-    ComPtr<ID3D11DeviceContext>    context;
-    ComPtr<IDXGIOutputDuplication> dup;
-    ComPtr<ID3D11Texture2D>        staging;
-    UINT srcW = 0;
-    UINT srcH = 0;
-    bool firstFrame = true;
-    std::vector<uint8_t> rgb;  // reused frame buffer
+    hyperion::win::DxgiDuplicator       dup;
+    hyperion::win::DisplayPowerMonitor  power;
+    std::vector<uint8_t>                rgb;   // reused frame buffer
+    ULONGLONG lastRecreateMs = 0;
+    bool      firstFrame     = true;
 };
-
-// (Re)create the output duplication and a matching CPU-readable staging texture
-// from the existing D3D11 device. Called at init and after DXGI_ERROR_ACCESS_LOST
-// (resolution change, secure desktop, fullscreen transitions).
-bool createDuplication(Capturer* c) {
-    c->dup.Reset();
-    c->staging.Reset();
-
-    ComPtr<IDXGIDevice>  dxgiDevice;
-    ComPtr<IDXGIAdapter> adapter;
-    ComPtr<IDXGIOutput>  output;
-    ComPtr<IDXGIOutput1> output1;
-    if (FAILED(c->device.As(&dxgiDevice)))         return false;
-    if (FAILED(dxgiDevice->GetAdapter(&adapter)))  return false;
-    if (FAILED(adapter->EnumOutputs(0, &output)))  return false;  // primary output
-    if (FAILED(output.As(&output1)))               return false;
-    if (FAILED(output1->DuplicateOutput(c->device.Get(), &c->dup))) return false;
-
-    DXGI_OUTDUPL_DESC desc{};
-    c->dup->GetDesc(&desc);
-    c->srcW = desc.ModeDesc.Width;
-    c->srcH = desc.ModeDesc.Height;
-
-    D3D11_TEXTURE2D_DESC td{};
-    td.Width            = c->srcW;
-    td.Height           = c->srcH;
-    td.MipLevels        = 1;
-    td.ArraySize        = 1;
-    td.Format           = DXGI_FORMAT_B8G8R8A8_UNORM;
-    td.SampleDesc.Count = 1;
-    td.Usage            = D3D11_USAGE_STAGING;
-    td.CPUAccessFlags   = D3D11_CPU_ACCESS_READ;
-    c->firstFrame = true;
-    return SUCCEEDED(c->device->CreateTexture2D(&td, nullptr, &c->staging));
-}
 
 // Area-average downscale of a BGRA source (rowPitch bytes per row) to packed
 // RGB (dstW*dstH*3). Averaging avoids the sampling noise a nearest-neighbour
@@ -120,50 +77,48 @@ extern "C" {
 JNIEXPORT jlong JNICALL
 Java_com_hyperion_grabber_WindowsCapture_nativeInit(JNIEnv*, jobject) {
     auto* c = new Capturer();
-    D3D_FEATURE_LEVEL level;
-    HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0,
-                                   nullptr, 0, D3D11_SDK_VERSION,
-                                   &c->device, &level, &c->context);
-    if (FAILED(hr) || !createDuplication(c)) {
+    if (!c->dup.init()) {
         delete c;          // headless/GPU-less host (e.g. CI) → caller uses Robot
         return 0;
     }
     return reinterpret_cast<jlong>(c);
 }
 
+// Returns dstW*dstH*3 RGB bytes for a fresh frame, or null when there is
+// nothing new to send: the desktop hasn't changed, or the duplication is
+// being rebuilt. The Kotlin side reuses its previous frame and its keepalive
+// resends it while nothing changes.
 JNIEXPORT jbyteArray JNICALL
 Java_com_hyperion_grabber_WindowsCapture_nativeCapture(JNIEnv* env, jobject,
                                                        jlong handle, jint dstW, jint dstH) {
     auto* c = reinterpret_cast<Capturer*>(handle);
-    if (!c || !c->dup || dstW <= 0 || dstH <= 0) return nullptr;
+    if (!c || dstW <= 0 || dstH <= 0) return nullptr;
 
-    // Wait briefly for the first frame; afterwards return immediately and let
-    // the caller reuse the previous frame when nothing changed (low CPU on a
-    // static desktop, and the Kotlin keepalive resends it).
-    UINT timeout = c->firstFrame ? 500 : 0;
-
-    ComPtr<IDXGIResource>  resource;
-    DXGI_OUTDUPL_FRAME_INFO info{};
-    HRESULT hr = c->dup->AcquireNextFrame(timeout, &info, &resource);
-    if (hr == DXGI_ERROR_WAIT_TIMEOUT) return nullptr;     // no change since last call
-    if (hr == DXGI_ERROR_ACCESS_LOST) {                    // mode change / secure desktop
-        createDuplication(c);
+    if (!c->dup.ready()) {
+        ULONGLONG now = GetTickCount64();
+        if (now - c->lastRecreateMs >= RECREATE_RETRY_MS) {
+            c->lastRecreateMs = now;
+            if (c->dup.recreate()) c->firstFrame = true;
+        }
         return nullptr;
     }
-    if (FAILED(hr)) return nullptr;
 
-    ComPtr<ID3D11Texture2D> tex;
-    if (FAILED(resource.As(&tex))) { c->dup->ReleaseFrame(); return nullptr; }
-    c->context->CopyResource(c->staging.Get(), tex.Get());
-    c->dup->ReleaseFrame();
-
-    D3D11_MAPPED_SUBRESOURCE mapped{};
-    if (FAILED(c->context->Map(c->staging.Get(), 0, D3D11_MAP_READ, 0, &mapped)))
+    // Wait briefly for the first frame; afterwards return immediately.
+    UINT timeout = c->firstFrame ? 500 : 0;
+    switch (c->dup.acquire(timeout)) {
+    case hyperion::win::DxgiDuplicator::Acquire::NoChange:
         return nullptr;
+    case hyperion::win::DxgiDuplicator::Acquire::Lost:
+        c->lastRecreateMs = GetTickCount64();
+        if (c->dup.recreate()) c->firstFrame = true;
+        return nullptr;
+    case hyperion::win::DxgiDuplicator::Acquire::Frame:
+        break;
+    }
 
-    downscale(reinterpret_cast<const uint8_t*>(mapped.pData), mapped.RowPitch,
-              c->srcW, c->srcH, dstW, dstH, c->rgb);
-    c->context->Unmap(c->staging.Get(), 0);
+    downscale(c->dup.data(), c->dup.pitch(), c->dup.width(), c->dup.height(),
+              dstW, dstH, c->rgb);
+    c->dup.release();
     c->firstFrame = false;
 
     jbyteArray arr = env->NewByteArray(static_cast<jsize>(c->rgb.size()));
@@ -171,6 +126,15 @@ Java_com_hyperion_grabber_WindowsCapture_nativeCapture(JNIEnv* env, jobject,
     env->SetByteArrayRegion(arr, 0, static_cast<jsize>(c->rgb.size()),
                             reinterpret_cast<const jbyte*>(c->rgb.data()));
     return arr;
+}
+
+// Console display power state (GUID_CONSOLE_DISPLAY_STATE). The Kotlin loop
+// pauses capture and drops the TCP connection while this is false.
+JNIEXPORT jboolean JNICALL
+Java_com_hyperion_grabber_WindowsCapture_nativeIsDisplayOn(JNIEnv*, jobject, jlong handle) {
+    auto* c = reinterpret_cast<Capturer*>(handle);
+    if (!c) return JNI_TRUE;
+    return c->power.isDisplayOn() ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT void JNICALL

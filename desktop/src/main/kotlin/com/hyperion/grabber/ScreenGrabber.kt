@@ -16,32 +16,40 @@ class ScreenGrabber(private val dstW: Int, private val dstH: Int) {
     private val dxgiHandle: Long = if (WindowsCapture.isAvailable) WindowsCapture.nativeInit() else 0L
     private val useDxgi: Boolean = dxgiHandle != 0L
 
-    private var lastFrame: ByteArray? = null
-
     // Robot is only created for the fallback path.
     private val robot: Robot? = if (useDxgi) null else Robot()
-    private val screenRect: Rectangle = GraphicsEnvironment
-        .getLocalGraphicsEnvironment()
-        .defaultScreenDevice
-        .defaultConfiguration
-        .bounds
 
-    fun captureRgb(): ByteArray {
-        if (useDxgi) {
-            WindowsCapture.nativeCapture(dxgiHandle, dstW, dstH)?.let { lastFrame = it }
-            // null = desktop unchanged: reuse the last frame (black until the
-            // very first frame arrives, which the keepalive will replace).
-            return lastFrame ?: ByteArray(dstW * dstH * 3)
-        }
-        return captureWithRobot()
+    // Returns a fresh dstW*dstH*3 RGB frame, or null when there is nothing new
+    // to send (DXGI: desktop unchanged or duplication being rebuilt; Robot:
+    // capture threw). Callers keep their last frame and let the keepalive
+    // resend it — mirroring CaptureResult::NoFrame in the C++ run loop.
+    fun captureRgb(): ByteArray? {
+        if (useDxgi) return WindowsCapture.nativeCapture(dxgiHandle, dstW, dstH)
+        return runCatching { captureWithRobot() }.getOrNull()
     }
+
+    // Display power state. Windows reports GUID_CONSOLE_DISPLAY_STATE through
+    // the native helper. The Robot path (Linux/macOS desktop) has no JVM API
+    // for DPMS, so it always reports "on" — a deliberate gap; the C++ Linux
+    // grabber does implement the DPMS pause.
+    fun isDisplayOn(): Boolean =
+        if (useDxgi) WindowsCapture.nativeIsDisplayOn(dxgiHandle) else true
 
     fun close() {
         if (useDxgi && dxgiHandle != 0L) WindowsCapture.nativeDestroy(dxgiHandle)
     }
 
+    // Re-read the bounds every frame: they change on a resolution switch, and
+    // a stale rectangle makes createScreenCapture throw or return a cropped
+    // image forever.
+    private fun primaryScreenBounds(): Rectangle = GraphicsEnvironment
+        .getLocalGraphicsEnvironment()
+        .defaultScreenDevice
+        .defaultConfiguration
+        .bounds
+
     private fun captureWithRobot(): ByteArray {
-        val capture = robot!!.createScreenCapture(screenRect)
+        val capture = robot!!.createScreenCapture(primaryScreenBounds())
         val scaled  = BufferedImage(dstW, dstH, BufferedImage.TYPE_INT_RGB)
         val g = scaled.createGraphics()
         g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR)

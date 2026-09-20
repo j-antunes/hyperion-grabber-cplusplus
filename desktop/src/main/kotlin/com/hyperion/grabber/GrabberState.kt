@@ -4,13 +4,16 @@ import androidx.compose.runtime.*
 import kotlinx.coroutines.*
 import java.util.prefs.Preferences
 
-enum class GrabStatus   { STOPPED, CONNECTING, RUNNING, ERROR }
+enum class GrabStatus   { STOPPED, CONNECTING, RUNNING, PAUSED, ERROR }
 enum class ReachStatus  { IDLE, CHECKING, OK, FAIL }
 
 class GrabberState {
+    // Loop timings — keep in step with GrabberBase (core/include/grabber_base.h)
+    // and the Android service.
     private companion object {
-        const val KEEPALIVE_MS = 3000L  // resend last frame on a static screen
-        const val RECONNECT_MS = 5000L  // backoff between reconnect attempts
+        const val KEEPALIVE_MS        = 3000L  // resend last frame on a static screen
+        const val RECONNECT_MS        = 5000L  // backoff between reconnect attempts
+        const val DISPLAY_OFF_POLL_MS = 500L
     }
 
     private val prefs = Preferences.userNodeForPackage(GrabberState::class.java)
@@ -34,7 +37,8 @@ class GrabberState {
     var fpsActual     by mutableStateOf(0)
     var errorMsg      by mutableStateOf("")
 
-    val isRunning get() = grabStatus == GrabStatus.RUNNING || grabStatus == GrabStatus.CONNECTING
+    val isRunning get() = grabStatus == GrabStatus.RUNNING || grabStatus == GrabStatus.CONNECTING ||
+                          grabStatus == GrabStatus.PAUSED
 
     // Strip scheme so user can paste full URLs
     fun normalizeHost(raw: String = host): String = raw.trim()
@@ -174,9 +178,35 @@ class GrabberState {
         var lastSentMs  = monoMs()
         var lastPixels: ByteArray? = null
         var nextFrameDueMs = monoMs()
+        var pausedForDisplay = false
 
         // Held outside the try so finally can close it (releases the DXGI handle).
         var grabber: ScreenGrabber? = null
+
+        // Drop the connection and retry every RECONNECT_MS until it comes back
+        // or the job is cancelled. Mirrors GrabberBase::runLoop and the Android
+        // keepalive: a single failed attempt must never end the session.
+        suspend fun reconnect(waitFirst: Boolean) {
+            client.disconnect()
+            grabStatus = GrabStatus.CONNECTING
+            var attempt = 0
+            if (waitFirst) {
+                errorMsg = "Connection lost — reconnecting in ${RECONNECT_MS / 1000}s…"
+                delay(RECONNECT_MS)
+            }
+            while (true) {
+                currentCoroutineContext().ensureActive()
+                if (client.connect()) break
+                attempt++
+                errorMsg = "Reconnect to $host:$port failed (attempt $attempt) — retrying in ${RECONNECT_MS / 1000}s…"
+                delay(RECONNECT_MS)
+            }
+            errorMsg = ""
+            grabStatus = GrabStatus.RUNNING
+            lastPixels = null
+            lastSentMs = monoMs()
+            nextFrameDueMs = monoMs()
+        }
 
         try {
             val (dstW, dstH) = HyperionJsonClient.queryResolution(host) ?: (216 to 36)
@@ -189,31 +219,42 @@ class GrabberState {
 
             while (true) {
                 currentCoroutineContext().ensureActive()
-                val rgb = g.captureRgb()
 
-                // Only transmit when the frame changed; resend the last frame
-                // every KEEPALIVE_MS on a static screen so Hyperion's priority
-                // doesn't expire. Mirrors the C++/Android behaviour.
-                val changed = lastPixels == null || !rgb.contentEquals(lastPixels)
-                val keepaliveDue = monoMs() - lastSentMs >= KEEPALIVE_MS
-                if (changed || keepaliveDue) {
-                    if (!client.sendFrame(rgb, dstW, dstH)) {
-                        // Retry the reconnect until it succeeds or we're stopped,
-                        // rather than giving up after one attempt.
+                // ── Display power ────────────────────────────────────────
+                // While the monitor is off, stop capturing and drop TCP so
+                // Hyperion releases our priority (same as Android SCREEN_OFF
+                // and the C++ grabbers' DPMS / GUID_CONSOLE_DISPLAY_STATE).
+                if (!g.isDisplayOn()) {
+                    if (!pausedForDisplay) {
+                        pausedForDisplay = true
                         client.disconnect()
-                        grabStatus = GrabStatus.CONNECTING
-                        while (true) {
-                            currentCoroutineContext().ensureActive()
-                            delay(RECONNECT_MS)
-                            if (client.connect()) break
-                        }
-                        grabStatus = GrabStatus.RUNNING
-                        lastPixels = null
-                        lastSentMs = monoMs()
-                        nextFrameDueMs = monoMs()
+                        grabStatus = GrabStatus.PAUSED
+                        fpsActual = 0
+                    }
+                    delay(DISPLAY_OFF_POLL_MS)
+                    continue
+                }
+                if (pausedForDisplay) {
+                    pausedForDisplay = false
+                    reconnect(waitFirst = false)
+                }
+
+                // ── Capture + send ───────────────────────────────────────
+                // null = nothing new (DXGI: desktop unchanged or duplication
+                // being rebuilt; Robot: capture threw). Only transmit when
+                // the frame changed; resend the last frame every KEEPALIVE_MS
+                // on a static screen so Hyperion's priority doesn't expire.
+                // Mirrors the C++/Android behaviour.
+                val rgb = g.captureRgb()
+                val changed = rgb != null && (lastPixels == null || !rgb.contentEquals(lastPixels))
+                val keepaliveDue = monoMs() - lastSentMs >= KEEPALIVE_MS
+                val toSend = if (changed) rgb else if (keepaliveDue) (rgb ?: lastPixels) else null
+                if (toSend != null) {
+                    if (!client.sendFrame(toSend, dstW, dstH)) {
+                        reconnect(waitFirst = true)
                         continue
                     }
-                    lastPixels = rgb
+                    lastPixels = toSend
                     lastSentMs = monoMs()
                     if (changed) frameCount++
                 }
@@ -242,7 +283,7 @@ class GrabberState {
             grabber?.close()
             client.disconnect()
             activeClient = null
-            if (grabStatus == GrabStatus.RUNNING || grabStatus == GrabStatus.CONNECTING) {
+            if (grabStatus != GrabStatus.ERROR) {
                 grabStatus = GrabStatus.STOPPED; fpsActual = 0
             }
         }
@@ -251,11 +292,23 @@ class GrabberState {
     private fun setWindowsAutostart(enabled: Boolean) {
         val exe = ProcessHandle.current().info().command().orElse(null) ?: return
         val key = """HKCU\Software\Microsoft\Windows\CurrentVersion\Run"""
+        // The Run value must itself be quoted because the install path has
+        // spaces ("C:\Program Files\..."). reg.exe consumes one level of quotes
+        // from /d, so pass \"...\": Java wraps the (space-containing) argument
+        // in quotes and CommandLineToArgv turns \" into literal quotes.
         val args = if (enabled)
-            arrayOf("reg", "add", key, "/v", "HyperionGrabber", "/t", "REG_SZ", "/d", "\"$exe\"", "/f")
+            listOf("reg", "add", key, "/v", "HyperionGrabber", "/t", "REG_SZ", "/d", "\\\"$exe\\\"", "/f")
         else
-            arrayOf("reg", "delete", key, "/v", "HyperionGrabber", "/f")
-        runCatching { Runtime.getRuntime().exec(args) }
+            listOf("reg", "delete", key, "/v", "HyperionGrabber", "/f")
+        runCatching {
+            val proc = ProcessBuilder(args).redirectErrorStream(true).start()
+            val output = proc.inputStream.bufferedReader().readText()
+            val finished = proc.waitFor(10, java.util.concurrent.TimeUnit.SECONDS)
+            // `reg delete` of a value that isn't there is a benign failure.
+            if (enabled && (!finished || proc.exitValue() != 0)) {
+                errorMsg = "Could not enable start on boot: ${output.trim().ifEmpty { "reg.exe failed" }}"
+            }
+        }.onFailure { errorMsg = "Could not update start on boot: ${it.message}" }
     }
 
     private fun setLinuxAutostart(enabled: Boolean) {

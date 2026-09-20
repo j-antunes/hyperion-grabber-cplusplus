@@ -13,6 +13,7 @@ add_executable(hyperion_tests
     test_flatbuffers.cpp
     test_black_bars.cpp
     test_hyperion_client.cpp
+    test_grabber_base.cpp
 )
 
 target_link_libraries(hyperion_tests PRIVATE hyperion_core GTest::gtest_main)

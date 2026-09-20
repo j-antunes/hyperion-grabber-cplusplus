@@ -186,12 +186,14 @@ private fun StatusCard(state: GrabberState) {
     val dotColor = when (state.grabStatus) {
         GrabStatus.RUNNING    -> Green
         GrabStatus.CONNECTING -> Amber
+        GrabStatus.PAUSED     -> Amber
         GrabStatus.ERROR      -> Red
         GrabStatus.STOPPED    -> Grey
     }
     val statusText = when (state.grabStatus) {
         GrabStatus.RUNNING    -> "Running  ·  ↑ ${state.fpsActual} fps"
         GrabStatus.CONNECTING -> "Connecting…"
+        GrabStatus.PAUSED     -> "Paused (display off)"
         GrabStatus.ERROR      -> "Error"
         GrabStatus.STOPPED    -> "Stopped"
     }

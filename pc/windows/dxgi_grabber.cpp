@@ -11,87 +11,49 @@ DXGIGrabber::~DXGIGrabber() {
     stop();
 }
 
+// All the DXGI work (primary-output selection, HDR-safe format, rotation,
+// ACCESS_LOST handling) lives in the shared pc/windows/dxgi_duplicator.h so
+// the desktop JNI helper behaves identically.
 bool DXGIGrabber::initCapture() {
-    D3D_FEATURE_LEVEL level;
-    HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0,
-                                   nullptr, 0, D3D11_SDK_VERSION,
-                                   &m_device, &level, &m_context);
-    if (FAILED(hr)) return false;
-
-    Microsoft::WRL::ComPtr<IDXGIDevice>  dxgiDevice;
-    Microsoft::WRL::ComPtr<IDXGIAdapter> adapter;
-    Microsoft::WRL::ComPtr<IDXGIOutput>  output;
-    Microsoft::WRL::ComPtr<IDXGIOutput1> output1;
-
-    if (FAILED(m_device.As(&dxgiDevice)))          return false;
-    if (FAILED(dxgiDevice->GetAdapter(&adapter)))   return false;
-    if (FAILED(adapter->EnumOutputs(0, &output)))   return false;
-    if (FAILED(output.As(&output1)))                return false;
-    if (FAILED(output1->DuplicateOutput(m_device.Get(), &m_duplication))) return false;
-
-    // The duplicated frames come in at the real desktop resolution.
-    // CopyResource requires identical texture dimensions, so the staging
-    // texture (and the frame processor) must match it, not a hardcoded size.
-    DXGI_OUTDUPL_DESC duplDesc{};
-    m_duplication->GetDesc(&duplDesc);
-    m_config.sourceWidth  = static_cast<int>(duplDesc.ModeDesc.Width);
-    m_config.sourceHeight = static_cast<int>(duplDesc.ModeDesc.Height);
-
-    D3D11_TEXTURE2D_DESC desc{};
-    desc.Width            = duplDesc.ModeDesc.Width;
-    desc.Height           = duplDesc.ModeDesc.Height;
-    desc.MipLevels        = 1;
-    desc.ArraySize        = 1;
-    desc.Format           = DXGI_FORMAT_B8G8R8A8_UNORM;
-    desc.SampleDesc.Count = 1;
-    desc.Usage            = D3D11_USAGE_STAGING;
-    desc.CPUAccessFlags   = D3D11_CPU_ACCESS_READ;
-
-    return SUCCEEDED(m_device->CreateTexture2D(&desc, nullptr, &m_stagingTex));
+    if (!m_dup.init()) return false;   // fails on the secure desktop → base retries
+    // The duplicated frames come in at the real desktop resolution (and
+    // orientation); the frame processor caches the source size, so keep
+    // m_config in sync. The base rebuilds the processor after each init.
+    m_config.sourceWidth  = static_cast<int>(m_dup.width());
+    m_config.sourceHeight = static_cast<int>(m_dup.height());
+    return true;
 }
 
 void DXGIGrabber::deinitCapture() {
-    m_stagingTex  = nullptr;
-    m_duplication = nullptr;
-    m_context     = nullptr;
-    m_device      = nullptr;
+    m_dup.reset();
+}
+
+bool DXGIGrabber::isDisplayOn() {
+    return m_power.isDisplayOn();
 }
 
 CaptureResult DXGIGrabber::captureFrame(FrameProcessor& processor) {
-    Microsoft::WRL::ComPtr<IDXGIResource>        resource;
-    DXGI_OUTDUPL_FRAME_INFO                      frameInfo{};
-
-    HRESULT hr = m_duplication->AcquireNextFrame(100, &frameInfo, &resource);
-    if (hr == DXGI_ERROR_WAIT_TIMEOUT) return CaptureResult::NoFrame;  // static screen
-    // ACCESS_LOST (and any other acquire failure) means the duplication interface
-    // is gone — resolution change, fullscreen switch, UAC prompt, Win+L. Signal a
-    // capture loss so the base recreates the interface; the TCP link stays up.
-    if (FAILED(hr)) return CaptureResult::Lost;
-
-    // A frame with LastPresentTime == 0 carries only mouse-pointer metadata; the
-    // desktop image is unchanged, so there is nothing new to send.
-    if (frameInfo.LastPresentTime.QuadPart == 0) {
-        m_duplication->ReleaseFrame();
-        return CaptureResult::NoFrame;
+    switch (m_dup.acquire(100)) {
+    case win::DxgiDuplicator::Acquire::NoChange:
+        return CaptureResult::NoFrame;  // static screen / pointer-only update
+    case win::DxgiDuplicator::Acquire::Lost:
+        // Resolution change, fullscreen switch, UAC prompt, Win+L: the
+        // duplication is gone. The base tears down and re-inits capture; the
+        // TCP link stays up.
+        return CaptureResult::Lost;
+    case win::DxgiDuplicator::Acquire::Frame:
+        break;
     }
 
-    Microsoft::WRL::ComPtr<ID3D11Texture2D> tex;
-    if (FAILED(resource.As(&tex))) {
-        m_duplication->ReleaseFrame();
+    // Defensive: never feed the processor a frame of a size it wasn't built for.
+    if (static_cast<int>(m_dup.width())  != processor.config().sourceWidth ||
+        static_cast<int>(m_dup.height()) != processor.config().sourceHeight) {
+        m_dup.release();
         return CaptureResult::Lost;
     }
-    m_context->CopyResource(m_stagingTex.Get(), tex.Get());
-    m_duplication->ReleaseFrame();
 
-    D3D11_MAPPED_SUBRESOURCE mapped{};
-    if (FAILED(m_context->Map(m_stagingTex.Get(), 0, D3D11_MAP_READ, 0, &mapped)))
-        return CaptureResult::Lost;
-
-    auto pixels = processor.processBGRA(
-        reinterpret_cast<const uint8_t*>(mapped.pData),
-        mapped.RowPitch);
-
-    m_context->Unmap(m_stagingTex.Get(), 0);
+    auto pixels = processor.processBGRA(m_dup.data(), m_dup.pitch());
+    m_dup.release();
 
     return m_client->sendFrame(pixels, m_config.targetWidth, m_config.targetHeight)
         ? CaptureResult::Sent : CaptureResult::Failed;
