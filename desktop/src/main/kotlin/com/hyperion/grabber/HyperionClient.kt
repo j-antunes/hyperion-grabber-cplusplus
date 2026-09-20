@@ -5,7 +5,6 @@ import java.io.EOFException
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
-import java.net.InetSocketAddress
 import java.net.Socket
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -24,26 +23,39 @@ class HyperionClient(private val host: String, private val port: Int, private va
     private var output: OutputStream? = null
     private var input: InputStream? = null
 
+    // Why the last connect() failed, so the UI can say "Connection refused"
+    // or "Hyperion rejected the registration" instead of a generic message.
+    var lastError: String? = null
+        private set
+
     fun connect(): Boolean = try {
-        // Bound the connect itself, not just reads — Socket(host, port) blocks for
-        // the OS default (up to minutes) on a routed-but-dead address.
-        val s = Socket().apply {
-            connect(InetSocketAddress(host, port), TIMEOUT_MS)
-            soTimeout = TIMEOUT_MS
-        }
-        socket = s
-        output = s.getOutputStream()
-        input  = s.getInputStream()
-        sendBuffer(buildRegister("hyperion-grabber-desktop", priority))
-        // Hyperion rejects a bad registration (e.g. a reserved priority) with an
-        // error reply and never registers the source; treat that as a failure
-        // instead of showing RUNNING while every frame is silently dropped.
-        val error = readReply()
-        if (error != null) {
-            disconnect()
+        lastError = null
+        // openSocket bounds the connect itself (a routed-but-dead address
+        // otherwise blocks for the OS default, up to minutes) and tries every
+        // resolved address, matching the C++ client's getaddrinfo loop.
+        val s = HyperionJsonClient.openSocket(host, port, TIMEOUT_MS)
+        if (s == null) {
+            lastError = "no response on port $port (Hyperion not running, " +
+                        "flatbuffers server disabled, or blocked by a firewall)"
             false
-        } else true
+        } else {
+            s.soTimeout = TIMEOUT_MS
+            socket = s
+            output = s.getOutputStream()
+            input  = s.getInputStream()
+            sendBuffer(buildRegister("hyperion-grabber-desktop", priority))
+            // Hyperion rejects a bad registration (e.g. a reserved priority) with an
+            // error reply and never registers the source; treat that as a failure
+            // instead of showing RUNNING while every frame is silently dropped.
+            val error = readReply()
+            if (error != null) {
+                lastError = "Hyperion rejected the registration: $error"
+                disconnect()
+                false
+            } else true
+        }
     } catch (e: Exception) {
+        lastError = e.message ?: e.toString()
         disconnect()
         false
     }

@@ -34,6 +34,8 @@ class GrabberState {
 
     var grabStatus    by mutableStateOf(GrabStatus.STOPPED)
     var reachStatus   by mutableStateOf(ReachStatus.IDLE)
+    // Detail line under the host field — says which port failed, not just "unreachable".
+    var reachMsg      by mutableStateOf("")
     var fpsActual     by mutableStateOf(0)
     var errorMsg      by mutableStateOf("")
 
@@ -49,13 +51,46 @@ class GrabberState {
     fun toggle() = if (isRunning) stop() else start()
 
     // Quiet reachability check used by the auto-test when the host field
-    // changes — pings the JSON/web port without disturbing the LEDs.
+    // changes — probes the ports without disturbing the LEDs.
+    //
+    // It checks the *flatbuffers* port the grabber actually uses first. The old
+    // check only probed the web UI on 8090, so a Hyperion whose flatbuffers
+    // server was off or firewalled still showed green (and vice versa: a
+    // reachable Hyperion with the web UI on another port showed "unreachable").
     fun testConnection() {
         val h = normalizeHost()
-        if (h.isEmpty()) { reachStatus = ReachStatus.FAIL; return }
+        val p = port.toIntOrNull() ?: 19400
+        if (h.isEmpty()) {
+            reachStatus = ReachStatus.FAIL
+            reachMsg = "Enter the IP or hostname of the machine running Hyperion"
+            return
+        }
         scope.launch {
             reachStatus = ReachStatus.CHECKING
-            reachStatus = if (HyperionJsonClient.ping(h)) ReachStatus.OK else ReachStatus.FAIL
+            reachMsg = "Checking $h…"
+            val r = HyperionJsonClient.probe(h, p)
+            when {
+                r.flatbuffers -> {
+                    reachStatus = ReachStatus.OK
+                    reachMsg = "Hyperion is reachable on $h:$p"
+                }
+                r.anything -> {
+                    // Hyperion is clearly there — only the port we need is shut.
+                    val open = buildList {
+                        if (r.jsonApi) add("${HyperionJsonClient.JSON_PORT} (JSON API)")
+                        if (r.web) add("${HyperionJsonClient.WEB_PORT} (web UI)")
+                    }.joinToString(", ")
+                    reachStatus = ReachStatus.FAIL
+                    reachMsg = "Found Hyperion on $h (port $open) but port $p is closed — " +
+                               "enable Flatbuffers Server in Hyperion's web UI under " +
+                               "Configuration → Network Services, and allow it through the firewall"
+                }
+                else -> {
+                    reachStatus = ReachStatus.FAIL
+                    reachMsg = "Cannot reach $h — check the IP, that Hyperion is running, " +
+                               "and that it is allowed through the firewall on that machine"
+                }
+            }
         }
     }
 
@@ -67,11 +102,20 @@ class GrabberState {
         val p = port.toIntOrNull() ?: 19400
         // Hyperion rejects a Register outside the 100–199 grabber range.
         val pr = priority.coerceIn(100, 199)
-        if (h.isEmpty()) { reachStatus = ReachStatus.FAIL; return }
+        if (h.isEmpty()) {
+            reachStatus = ReachStatus.FAIL
+            reachMsg = "Enter the IP or hostname of the machine running Hyperion"
+            return
+        }
         scope.launch {
             reachStatus = ReachStatus.CHECKING
+            reachMsg = "Sending test frames to $h:$p…"
             val client = HyperionClient(h, p, pr)
-            if (!client.connect()) { reachStatus = ReachStatus.FAIL; return@launch }
+            if (!client.connect()) {
+                reachStatus = ReachStatus.FAIL
+                reachMsg = "Test failed — ${client.lastError ?: "could not connect to $h:$p"}"
+                return@launch
+            }
             val w = 16; val ht = 16
             val colors = listOf(
                 byteArrayOf(255.toByte(), 0, 0),  // red
@@ -92,6 +136,8 @@ class GrabberState {
                 client.disconnect()
             }
             reachStatus = if (ok) ReachStatus.OK else ReachStatus.FAIL
+            reachMsg = if (ok) "Test frames sent — the LEDs should have flashed red, green, blue"
+                       else "Connected to $h:$p but sending frames failed"
         }
     }
 
@@ -167,7 +213,7 @@ class GrabberState {
         activeClient = client
         if (!client.connect()) {
             grabStatus = GrabStatus.ERROR
-            errorMsg = "Could not connect to $host:$port"
+            errorMsg = "Could not connect to $host:$port — ${client.lastError ?: "no response"}"
             activeClient = null
             return
         }

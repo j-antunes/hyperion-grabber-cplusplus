@@ -54,8 +54,10 @@ fun App(state: GrabberState) {
 
 @Composable
 private fun SettingsCard(state: GrabberState) {
-    // Auto-test reachability 1s after host stops changing (mirrors Android behaviour)
-    LaunchedEffect(state.host) {
+    // Auto-test reachability 1s after the host or port stops changing
+    // (mirrors Android behaviour). The port is a key too: the probe now checks
+    // the flatbuffers port, so editing it has to re-run the check.
+    LaunchedEffect(state.host, state.port) {
         if (state.host.isNotBlank() && !state.isRunning) {
             delay(1000)
             state.testConnection()
@@ -77,6 +79,7 @@ private fun SettingsCard(state: GrabberState) {
                         onValueChange = {
                             state.host = it
                             state.reachStatus = ReachStatus.IDLE
+                            state.reachMsg = ""
                         },
                         label = { Text("Hyperion Host") },
                         placeholder = { Text("e.g. 192.168.1.100", color = Grey) },
@@ -89,10 +92,18 @@ private fun SettingsCard(state: GrabberState) {
                     Button(
                         onClick = { state.testLeds() },
                         enabled = !state.isRunning && state.host.isNotBlank(),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1A5276)),
+                        // contentColor must be set explicitly: buttonColors()
+                        // otherwise keeps the scheme's onPrimary, which is a dark
+                        // navy against these dark containers — near-invisible text.
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor         = Color(0xFF2C7BB6),
+                            contentColor           = Color.White,
+                            disabledContainerColor = Color(0xFF2A3440),
+                            disabledContentColor   = Color(0xFF9AA5B1),
+                        ),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
                     ) {
-                        Text("Test LEDs", fontSize = 13.sp)
+                        Text("Test LEDs", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
                 Text(
@@ -100,10 +111,16 @@ private fun SettingsCard(state: GrabberState) {
                     color = Grey,
                     fontSize = 11.sp
                 )
-                if (state.reachStatus == ReachStatus.OK) {
-                    Text("Hyperion is reachable", color = Green, fontSize = 11.sp)
-                } else if (state.reachStatus == ReachStatus.FAIL) {
-                    Text("Cannot reach Hyperion — check host, port, and that Hyperion is running", color = Red, fontSize = 11.sp)
+                if (state.reachMsg.isNotEmpty()) {
+                    Text(
+                        state.reachMsg,
+                        color = when (state.reachStatus) {
+                            ReachStatus.OK   -> Green
+                            ReachStatus.FAIL -> Red
+                            else             -> Amber
+                        },
+                        fontSize = 11.sp
+                    )
                 }
             }
 
@@ -213,7 +230,8 @@ private fun StatusCard(state: GrabberState) {
                 modifier = Modifier.fillMaxWidth().height(48.dp),
                 shape = RoundedCornerShape(8.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (state.isRunning) Color(0xFFB71C1C) else Color(0xFF1B5E20)
+                    containerColor = if (state.isRunning) Color(0xFFC62828) else Color(0xFF2E7D32),
+                    contentColor   = Color.White,
                 )
             ) {
                 Text(if (state.isRunning) "Stop" else "Start", fontSize = 16.sp, fontWeight = FontWeight.Bold)

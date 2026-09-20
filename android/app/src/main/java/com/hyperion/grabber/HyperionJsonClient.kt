@@ -5,6 +5,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
 import kotlin.math.ceil
@@ -52,11 +53,29 @@ object HyperionJsonClient {
     // Hard cap — no point sending more than this regardless of LED density
     private const val MAX_DIM = 256
 
+    // Try every address the name resolves to, matching the C++ client's
+    // getaddrinfo loop (core/src/hyperion_client.cpp) and the desktop app.
+    // InetSocketAddress(host, port) commits to one address, so a host that
+    // resolves to IPv6 first fails against an IPv4-only Hyperion.
+    private fun openSocket(host: String, port: Int, timeoutMs: Int): Socket? {
+        val addrs = runCatching { InetAddress.getAllByName(host) }.getOrNull() ?: return null
+        for (addr in addrs) {
+            val s = Socket()
+            try {
+                s.connect(InetSocketAddress(addr, port), timeoutMs)
+                return s
+            } catch (e: Exception) {
+                runCatching { s.close() }
+            }
+        }
+        return null
+    }
+
     suspend fun queryServerInfo(host: String): Result<HyperionServerInfo> =
         withContext(Dispatchers.IO) {
             runCatching {
-                Socket().use { socket ->
-                    socket.connect(InetSocketAddress(host, JSON_PORT), TIMEOUT_MS)
+                (openSocket(host, JSON_PORT, TIMEOUT_MS)
+                    ?: error("could not connect to $host:$JSON_PORT")).use { socket ->
                     socket.soTimeout = TIMEOUT_MS
 
                     val writer = socket.getOutputStream().bufferedWriter()
@@ -87,8 +106,8 @@ object HyperionJsonClient {
                 // Send over the raw JSON-RPC socket (19444), not cleartext HTTP on
                 // 8090: HttpURLConnection is blocked by the platform's default
                 // no-cleartext policy on API 28+, which silently broke this.
-                Socket().use { socket ->
-                    socket.connect(InetSocketAddress(host, JSON_PORT), TIMEOUT_MS)
+                (openSocket(host, JSON_PORT, TIMEOUT_MS)
+                    ?: error("could not connect to $host:$JSON_PORT")).use { socket ->
                     socket.soTimeout = TIMEOUT_MS
 
                     val writer = socket.getOutputStream().bufferedWriter()
